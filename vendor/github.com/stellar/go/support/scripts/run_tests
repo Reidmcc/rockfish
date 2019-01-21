@@ -1,0 +1,15 @@
+#! /bin/bash
+set -e
+
+if [ "$CGO_ENABLED" = "1" ] 
+then
+    find . -maxdepth 1 -mindepth 0 -type d \
+      | egrep -v '^\.\/vendor|^.\/docs|^\.\/\..*' \
+      | sed 's/.*/&\/.../g' \
+      | xargs -I {} -P 4 go test -race {}
+else
+    find . -maxdepth 1 -mindepth 0 -type d \
+      | egrep -v '^\.\/vendor|^.\/docs|^\.\/\..*' \
+      | sed 's/.*/&\/.../g' \
+      | xargs -I {} -P 4 go test {}
+fi

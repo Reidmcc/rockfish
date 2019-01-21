@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/interstellar/kelp/support/utils"
 	"github.com/Reidmcc/rockfish/arbitrageur"
 	"github.com/interstellar/kelp/support/logger"
+	"github.com/interstellar/kelp/support/utils"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go/support/config"
 )
@@ -22,7 +22,7 @@ var arbitcycleCmd = &cobra.Command{
 func init() {
 	// short flags
 	botConfigPath := arbitcycleCmd.Flags().StringP("botConf", "c", "", "(required) trading bot's basic config file path")
-	stratConfigPath := arbitcycleCmd.Flags().StringP("stratConf", "f", "", "strategy config file path")
+	//stratConfigPath := arbitcycleCmd.Flags().StringP("stratConf", "f", "", "strategy config file path")
 	// long-only flags
 	operationalBuffer := arbitcycleCmd.Flags().Float64("operationalBuffer", 20, "buffer of native XLM to maintain beyond minimum account balance requirement")
 	simMode := arbitcycleCmd.Flags().Bool("sim", false, "simulate the bot's actions without placing any trades")
@@ -49,16 +49,16 @@ func init() {
 	arbitcycleCmd.Run = func(ccmd *cobra.Command, args []string) {
 		l := logger.MakeBasicLogger()
 		var arbitConfig arbitrageur.ArbitConfig
-		e := config.Read(*botConfigPath, &botConfig)
-		utils.CheckConfigError(botConfig, e, *botConfigPath)
-		e = botConfig.Init()
+		e := config.Read(*botConfigPath, &arbitConfig)
+		utils.CheckConfigError(&arbitConfig, e, *botConfigPath)
+		e = arbitConfig.Init()
 		if e != nil {
 			logger.Fatal(l, e)
 		}
 
 		if *logPrefix != "" {
 			t := time.Now().Format("20060102T150405MST")
-			fileName := fmt.Sprintf("%s_%s_%s_%s_%s_%s.log", *logPrefix, botConfig.AssetCodeA, botConfig.IssuerA, botConfig.AssetCodeB, botConfig.IssuerB, t)
+			fileName := fmt.Sprintf("%s_%s.log", *logPrefix, t)
 			e = setLogFile(fileName)
 			if e != nil {
 				logger.Fatal(l, e)

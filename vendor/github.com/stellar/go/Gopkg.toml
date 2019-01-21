@@ -1,0 +1,58 @@
+[[constraint]]
+  branch = "default"
+  name = "bitbucket.org/ww/goautoneg"
+
+[[constraint]]
+  name = "github.com/asaskevich/govalidator"
+  source = "https://github.com/asaskevich/govalidator.git"
+
+[[constraint]]
+  name = "github.com/go-chi/chi"
+  version = "~3.1.5"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/goji/httpauth"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/haltingstate/secp256k1-go"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/howeyc/gopass"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/manucorporat/sse"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/onsi/ginkgo"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/onsi/gomega"
+
+[[constraint]]
+  name = "github.com/pkg/errors"
+  version = "0.8.0"
+
+[[constraint]]
+  name = "github.com/rs/cors"
+  version = "1.0.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/tyler-smith/go-bip32"
+
+[[constraint]]
+  name = "gopkg.in/tylerb/graceful.v1"
+  version = "1.2.13"
+
+[[constraint]]
+  name = "github.com/sirupsen/logrus"
+  revision = "68cec9f21fbf3ea8d8f98c044bc6ce05f17b267a"
+
+[prune]
+  go-tests = true

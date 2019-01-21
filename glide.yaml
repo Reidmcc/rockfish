@@ -1,0 +1,23 @@
+package: github.com/Reidmcc/rockfish
+import:
+- package: github.com/interstellar/kelp
+  subpackages:
+  - model
+  - plugins
+  - support/logger
+  - support/monitoring
+  - support/networking
+  - support/utils
+  - terminator
+  - trader
+- package: github.com/nikhilsaraf/go-tools
+  subpackages:
+  - multithreading
+- package: github.com/spf13/cobra
+  version: v0.0.3
+- package: github.com/stellar/go
+  subpackages:
+  - clients/horizon
+  - support/config
+- package: github.com/spf13/pflag
+  version: ~1.0.3
