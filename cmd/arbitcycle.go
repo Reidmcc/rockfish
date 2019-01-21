@@ -5,13 +5,13 @@ import (
 	"time"
 
 	"github.com/interstellar/kelp/support/utils"
-	"github.com/kelpbot-forest/rockfish/arbitrageur"
-	"github.com/kelpbot-forest/rockfish/support/logger"
+	"github.com/Reidmcc/rockfish/arbitrageur"
+	"github.com/interstellar/kelp/support/logger"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go/support/config"
 )
 
-const arbitExamples = `  kelp arbitcycle --botConf ./path/arbitrageur.cfg --stratConf ./path/arbitcycle.cfg`
+const arbitExamples = `  rockfish arbitcycle --botConf ./path/arbitrageur.cfg --stratConf ./path/arbitcycle.cfg`
 
 var arbitcycleCmd = &cobra.Command{
 	Use:     "arbitcycle",

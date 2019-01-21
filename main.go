@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"github.com/kelpbot-forest/rockfish/cmd"
+	"github.com/Reidmcc/rockfish/cmd"
 )
 
 func main() {
