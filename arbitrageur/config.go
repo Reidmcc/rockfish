@@ -12,14 +12,6 @@ type ArbitConfig struct {
 	TradingSecretSeed   string `valid:"-" toml:"TRADING_SECRET_SEED"`
 	TickIntervalSeconds int32  `valid:"-" toml:"TICK_INTERVAL_SECONDS"`
 	HorizonURL          string `valid:"-" toml:"HORIZON_URL"`
-	AlertType           string `valid:"-" toml:"ALERT_TYPE"`
-	AlertAPIKey         string `valid:"-" toml:"ALERT_API_KEY"`
-	MonitoringPort      uint16 `valid:"-" toml:"MONITORING_PORT"`
-	MonitoringTLSCert   string `valid:"-" toml:"MONITORING_TLS_CERT"`
-	MonitoringTLSKey    string `valid:"-" toml:"MONITORING_TLS_KEY"`
-	GoogleClientID      string `valid:"-" toml:"GOOGLE_CLIENT_ID"`
-	GoogleClientSecret  string `valid:"-" toml:"GOOGLE_CLIENT_SECRET"`
-	AcceptableEmails    string `valid:"-" toml:"ACCEPTABLE_GOOGLE_EMAILS"`
 
 	tradingAccount *string
 	sourceAccount  *string // can be nil

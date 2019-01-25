@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/interstellar/kelp/plugins"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/stellar/go/build"
@@ -22,7 +21,7 @@ type arbitCycleConfig struct {
 // PathFinder keeps track of all the possible payment paths
 type PathFinder struct {
 	// multiDex  MultiDex won't reside here
-	SDEX      *plugins.SDEX
+	api       *horizon.Client
 	HoldAsset *horizon.Asset
 	AssetBook []*horizon.Asset
 	PathList  []PaymentPath
@@ -58,7 +57,7 @@ func (c arbitCycleConfig) String() string {
 
 // MakePathFinder is a factory method
 func MakePathFinder(
-	SDEX *plugins.SDEX,
+	api *horizon.Client,
 	stratConfigPath string,
 	simMode bool,
 ) (*PathFinder, error) {
@@ -94,8 +93,7 @@ func MakePathFinder(
 	for i := 0; i < len(assetBook); i++ {
 		for n := 0; n < len(assetBook); n++ {
 			if assetBook[i] != assetBook[n] {
-				var path PaymentPath
-				path = MakePaymentPath(assetBook[i], assetBook[n])
+				path := MakePaymentPath(assetBook[i], assetBook[n], holdAsset)
 				l.Infof("added path: %s -> %s -> %s -> %s", holdAsset, assetBook[i], assetBook[n], holdAsset)
 				pathList = append(pathList, path)
 			}
@@ -103,7 +101,7 @@ func MakePathFinder(
 	}
 
 	return &PathFinder{
-		SDEX:      SDEX,
+		api:       api,
 		HoldAsset: holdAsset,
 		AssetBook: assetBook,
 		PathList:  pathList,
@@ -112,10 +110,10 @@ func MakePathFinder(
 }
 
 // MakePaymentPath makes a payment path
-func (p *PathFinder) MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asset) PaymentPath {
+func MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asset, holdAsset *horizon.Asset) PaymentPath {
 	firstPair := TradingPair{
 		Base:  assetA,
-		Quote: p.HoldAsset,
+		Quote: holdAsset,
 	}
 	midPair := TradingPair{
 		Base:  assetA,
@@ -123,7 +121,7 @@ func (p *PathFinder) MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asse
 	}
 	lastPair := TradingPair{
 		Base:  assetB,
-		Quote: p.HoldAsset,
+		Quote: holdAsset,
 	}
 	return PaymentPath{
 		PathAssetA: assetA,
@@ -135,20 +133,27 @@ func (p *PathFinder) MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asse
 }
 
 // FindBestPath determines and returns the most profitable payment path
-func (p *PathFinder) FindBestPath() PaymentPath {
+func (p *PathFinder) FindBestPath() (*PaymentPath, error) {
 	bestRatio := 0.0
 	var bestPath PaymentPath
 	for _, b := range p.PathList {
-		ratio := p.calculatePathRatio(b)
+		ratio, e := p.calculatePathRatio(b)
+		if e != nil {
+			return nil, fmt.Errorf("Error while calculating ratios %s", e)
+		}
 		if ratio > bestRatio {
 			bestRatio = ratio
+			// if ratio == 0.0 {
+			// 	bestPath := b
+			// } else {
 			bestPath = b
+			// }
 		}
-		l.Infof("Return ratio for pair %s - > %s was %v \n", b.PathAssetA, b.PathAssetB, ratio)
+		p.l.Infof("Return ratio for pair %s - > %s was %v \n", b.PathAssetA, b.PathAssetB, ratio)
 	}
-	l.Infof("Best path was %s - > %s with return ratio of %v", bestpath.PathAssetA, bestPath.PathAssetB, bestRatio)
+	p.l.Infof("Best path was %s - > %s with return ratio of %v\n", bestPath.PathAssetA, bestPath.PathAssetB, bestRatio)
 
-	return bestPath
+	return &bestPath, nil
 }
 
 func (p *PathFinder) calculatePathRatio(path PaymentPath) (float64, error) {
@@ -177,7 +182,7 @@ func (p *PathFinder) calculatePathRatio(path PaymentPath) (float64, error) {
 
 // GetTopBid returns the top bid for a trading pair
 func (p *PathFinder) GetTopBid(pair TradingPair) (float64, error) {
-	orderBook, e := p.GetOrderBook(p.SDEX.API)
+	orderBook, e := p.GetOrderBook(p.api, pair)
 	if e != nil {
 		return 0, fmt.Errorf("unable to get sdex price: %s", e)
 	}
@@ -190,7 +195,7 @@ func (p *PathFinder) GetTopBid(pair TradingPair) (float64, error) {
 
 // GetLowAsk returns the low ask for a trading pair
 func (p *PathFinder) GetLowAsk(pair TradingPair) (float64, error) {
-	orderBook, e := p.GetOrderBook(pair)
+	orderBook, e := p.GetOrderBook(p.api, pair)
 	if e != nil {
 		return 0, fmt.Errorf("unable to get sdex price: %s", e)
 	}
@@ -204,7 +209,7 @@ func (p *PathFinder) GetLowAsk(pair TradingPair) (float64, error) {
 // GetOrderBook gets the SDEX order book
 func (p *PathFinder) GetOrderBook(api *horizon.Client, pair TradingPair) (orderBook horizon.OrderBookSummary, e error) {
 	baseAsset, quoteAsset := p.pair2Assets(pair)
-	b, e := api.LoadOrderBook(baseAsset, quoteAsset)
+	b, e := api.LoadOrderBook(*baseAsset, *quoteAsset)
 	if e != nil {
 		log.Printf("Can't get SDEX orderbook: %s\n", e)
 		return
