@@ -8,8 +8,8 @@ import (
 
 // ArbitConfig represents the configuration params for the arbitrage bot
 type ArbitConfig struct {
-	SourceSecretSeed    string `valid:"-" toml:"SOURCE_SECRET_SEED"`
 	TradingSecretSeed   string `valid:"-" toml:"TRADING_SECRET_SEED"`
+	SourceSecretSeed    string `valid:"-" toml:"SOURCE_SECRET_SEED"`
 	TickIntervalSeconds int32  `valid:"-" toml:"TICK_INTERVAL_SECONDS"`
 	HorizonURL          string `valid:"-" toml:"HORIZON_URL"`
 
@@ -18,7 +18,7 @@ type ArbitConfig struct {
 }
 
 // String impl.
-func (a *ArbitConfig) String() string {
+func (a ArbitConfig) String() string {
 	return utils.StructString(a, map[string]func(interface{}) interface{}{
 		"SOURCE_SECRET_SEED":  utils.SecretKey2PublicKey,
 		"TRADING_SECRET_SEED": utils.SecretKey2PublicKey,
@@ -42,6 +42,7 @@ func (a *ArbitConfig) SourceAccount() string {
 func (a *ArbitConfig) Init() error {
 	var tradingAccount *string
 	tradingAccount, e := utils.ParseSecret(a.TradingSecretSeed)
+	a.tradingAccount = tradingAccount
 	if e != nil {
 		return e
 	}

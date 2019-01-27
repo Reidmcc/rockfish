@@ -6,29 +6,57 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
+	"runtime/debug"
 	"time"
 
 	"github.com/Reidmcc/rockfish/arbitrageur"
 	"github.com/Reidmcc/rockfish/modules"
 	"github.com/interstellar/kelp/plugins"
 	"github.com/interstellar/kelp/support/logger"
-	"github.com/interstellar/kelp/support/monitoring"
-	"github.com/interstellar/kelp/support/networking"
 	"github.com/interstellar/kelp/support/utils"
-	"github.com/interstellar/kelp/trader"
 	"github.com/nikhilsaraf/go-tools/multithreading"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/support/config"
 )
 
-const arbitExamples = `  rockfish arbitcycle --botConf ./path/arbitrageur.cfg --stratConf ./path/arbitcycle.cfg`
+const arbitExamples = `  rockfish arbitcycle --botConf ./path/botconfig.cfg --stratConf ./path/arbitcycle.cfg`
+
+const tradeExamples = `  kelp trade --botConf ./path/trader.cfg --strategy buysell --stratConf ./path/buysell.cfg
+  kelp trade --botConf ./path/trader.cfg --strategy buysell --stratConf ./path/buysell.cfg --sim`
+
+var tradeCmd = &cobra.Command{
+	Use:     "trade",
+	Short:   "Trades against the Stellar universal marketplace using the specified strategy",
+	Example: tradeExamples,
+}
+
+func requiredFlag(flag string) {
+	e := arbitcycleCmd.MarkFlagRequired(flag)
+	if e != nil {
+		panic(e)
+	}
+}
+
+func hiddenFlag(flag string) {
+	e := arbitcycleCmd.Flags().MarkHidden(flag)
+	if e != nil {
+		panic(e)
+	}
+}
+
+func logPanic(l logger.Logger) {
+	if r := recover(); r != nil {
+		st := debug.Stack()
+		l.Errorf("PANIC!! recovered to log it in the file\npanic: %v\n\n%s\n", r, string(st))
+	}
+}
 
 var arbitcycleCmd = &cobra.Command{
 	Use:     "arbitcycle",
 	Short:   "Watches for price variations and runs favorable multi-asset trade cycles",
-	Example: tradeExamples,
+	Example: arbitExamples,
 }
 
 func init() {
@@ -62,11 +90,21 @@ func init() {
 		l := logger.MakeBasicLogger()
 		var arbitConfig arbitrageur.ArbitConfig
 		e := config.Read(*botConfigPath, &arbitConfig)
-		utils.CheckConfigError(&arbitConfig, e, *botConfigPath)
+		utils.CheckConfigError(arbitConfig, e, *botConfigPath)
 		e = arbitConfig.Init()
 		if e != nil {
-			logger.Fatal(l, e)
+			logger.Fatal(l, errors.Cause(e))
 		}
+
+		utils.LogConfig(arbitConfig)
+
+		if *stratConfigPath == "" {
+			logger.Fatal(l, fmt.Errorf("arbitcycle mode needs a config file"))
+		}
+
+		var stratConfig modules.ArbitCycleConfig
+		err := config.Read(*stratConfigPath, &stratConfig)
+		utils.CheckConfigError(stratConfig, err, *stratConfigPath)
 
 		if *logPrefix != "" {
 			t := time.Now().Format("20060102T150405MST")
@@ -82,7 +120,7 @@ func init() {
 			defer logPanic(l)
 		}
 
-		startupMessage := "Starting Kelp in Arbitrage Cycle mode: " + version + " [" + gitHash + "]"
+		startupMessage := "Starting Rockfish in Arbitrage Cycle mode: " + version + " [" + gitHash + "]"
 		if *simMode {
 			startupMessage += " (simulation mode)"
 		}
@@ -91,145 +129,82 @@ func init() {
 		// now that we've got the basic messages logged, validate the cli params
 		validateCliParams(l)
 
-		// only log botConfig file here so it can be included in the log file
-		utils.LogConfig(botConfig)
+		// only log arbitConfig file here so it can be included in the log file
+		utils.LogConfig(arbitConfig)
+		l.Info("")
+		utils.LogConfig(stratConfig)
 
-		client := &horizon.Client{
-			URL:  botConfig.HorizonURL,
-			HTTP: http.DefaultClient,
-		}
-
-		alert, e := monitoring.MakeAlert(botConfig.AlertType, botConfig.AlertAPIKey)
-		if e != nil {
-			l.Infof("Unable to set up monitoring for alert type '%s' with the given API key\n", botConfig.AlertType)
-		}
 		// --- start initialization of objects ----
 		threadTracker := multithreading.MakeThreadTracker()
 
-		multiDex := modules.MakeMultiDex(
+		client := &horizon.Client{
+			URL:  arbitConfig.HorizonURL,
+			HTTP: http.DefaultClient,
+		}
+
+		dexAgent := modules.MakeDexAgent(
 			client,
 			arbitConfig.SourceSecretSeed,
 			arbitConfig.TradingSecretSeed,
 			arbitConfig.SourceAccount(),
 			arbitConfig.TradingAccount(),
-			utils.ParseNetwork(botConfig.HorizonURL),
+			utils.ParseNetwork(arbitConfig.HorizonURL),
 			threadTracker,
 			*operationalBuffer,
+			stratConfig.MinRatio,
+			stratConfig.UseBalance,
+			stratConfig.StaticAmount,
 			*simMode,
+			l,
 		)
 
-		pathManager := modules.MakePathManager(*stratConfigPath, *simMode)
-		strat, e := plugins.MakeStrategy(sdex, tradingPair, &assetBase, &assetQuote, *strategy, *stratConfigPath, *simMode)
+		dexWatcher := modules.MakeDexWatcher(client, utils.ParseNetwork(arbitConfig.HorizonURL), l)
+
+		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, l)
 		if e != nil {
-			l.Info("")
-			l.Errorf("%s", e)
-			// we want to delete all the offers and exit here since there is something wrong with our setup
-			deleteAllOffersAndExit(l, botConfig, client, sdex)
+			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
 
 		timeController := plugins.MakeIntervalTimeController(
-			time.Duration(botConfig.TickIntervalSeconds)*time.Second,
-			botConfig.MaxTickDelayMillis,
+			time.Duration(arbitConfig.TickIntervalSeconds)*time.Second,
+			0,
 		)
-		bot := trader.MakeBot(
-			client,
-			botConfig.AssetBase(),
-			botConfig.AssetQuote(),
-			botConfig.TradingAccount(),
-			sdex,
-			strat,
+
+		arbitrageur := arbitrageur.MakeArbitrageur(
+			*pathFinder,
+			*dexWatcher,
+			*dexAgent,
 			timeController,
-			botConfig.DeleteCyclesThreshold,
 			threadTracker,
 			fixedIterations,
-			dataKey,
-			alert,
+			*simMode,
+			l,
 		)
+
 		// --- end initialization of objects ---
 
-		l.Info("validating trustlines...")
-		validateTrustlines(l, client, &botConfig)
-		l.Info("trustlines valid")
-
-		// --- start initialization of services ---
-		if botConfig.MonitoringPort != 0 {
-			go func() {
-				e := startMonitoringServer(l, botConfig)
-				if e != nil {
-					l.Info("")
-					l.Info("unable to start the monitoring server or problem encountered while running server:")
-					l.Errorf("%s", e)
-					// we want to delete all the offers and exit here because we don't want the bot to run if monitoring isn't working
-					// if monitoring is desired but not working properly, we want the bot to be shut down and guarantee that there
-					// aren't outstanding offers.
-					deleteAllOffersAndExit(l, botConfig, client, sdex)
-				}
-			}()
+		if stratConfig.HoldAssetCode != "XLM" {
+			l.Info("validating trustlines...")
+			validateTrustlines(l, client, stratConfig, arbitConfig)
+			l.Info("trustlines valid")
 		}
 
-		// --- end initialization of services ---
-
 		l.Info("Starting the trader bot...")
-		bot.Start()
+		arbitrageur.Start()
 	}
 }
 
-func startMonitoringServer(l logger.Logger, botConfig trader.BotConfig) error {
-	serverConfig := &networking.Config{
-		GoogleClientID:     botConfig.GoogleClientID,
-		GoogleClientSecret: botConfig.GoogleClientSecret,
-		PermittedEmails:    map[string]bool{},
-	}
-	// Load acceptable Google emails into the map
-	for _, email := range strings.Split(botConfig.AcceptableEmails, ",") {
-		serverConfig.PermittedEmails[email] = true
-	}
-
-	healthMetrics, e := monitoring.MakeMetricsRecorder(map[string]interface{}{"success": true})
-	if e != nil {
-		return fmt.Errorf("unable to make metrics recorder for the health endpoint: %s", e)
-	}
-
-	healthEndpoint, e := monitoring.MakeMetricsEndpoint("/health", healthMetrics, networking.NoAuth)
-	if e != nil {
-		return fmt.Errorf("unable to make /health endpoint: %s", e)
-	}
-	kelpMetrics, e := monitoring.MakeMetricsRecorder(nil)
-	if e != nil {
-		return fmt.Errorf("unable to make metrics recorder for the /metrics endpoint: %s", e)
-	}
-
-	metricsEndpoint, e := monitoring.MakeMetricsEndpoint("/metrics", kelpMetrics, networking.GoogleAuth)
-	if e != nil {
-		return fmt.Errorf("unable to make /metrics endpoint: %s", e)
-	}
-	server, e := networking.MakeServer(serverConfig, []networking.Endpoint{healthEndpoint, metricsEndpoint})
-	if e != nil {
-		return fmt.Errorf("unable to initialize the metrics server: %s", e)
-	}
-
-	l.Infof("Starting monitoring server on port %d\n", botConfig.MonitoringPort)
-	return server.StartServer(botConfig.MonitoringPort, botConfig.MonitoringTLSCert, botConfig.MonitoringTLSKey)
-}
-
-func validateTrustlines(l logger.Logger, client *horizon.Client, botConfig *trader.BotConfig) {
-	account, e := client.LoadAccount(botConfig.TradingAccount())
+func validateTrustlines(l logger.Logger, client *horizon.Client, stratConfig modules.ArbitCycleConfig, arbitConfig arbitrageur.ArbitConfig) {
+	account, e := client.LoadAccount(arbitConfig.TradingAccount())
 	if e != nil {
 		logger.Fatal(l, e)
 	}
 
 	missingTrustlines := []string{}
-	if botConfig.IssuerA != "" {
-		balance := utils.GetCreditBalance(account, botConfig.AssetCodeA, botConfig.IssuerA)
+	if stratConfig.HoldAssetCode != "" {
+		balance := utils.GetCreditBalance(account, stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
 		if balance == nil {
-			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", botConfig.AssetCodeA, botConfig.IssuerA))
-		}
-	}
-
-	if botConfig.IssuerB != "" {
-		balance := utils.GetCreditBalance(account, botConfig.AssetCodeB, botConfig.IssuerB)
-		if balance == nil {
-			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", botConfig.AssetCodeB, botConfig.IssuerB))
+			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer))
 		}
 	}
 

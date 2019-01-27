@@ -2,115 +2,127 @@ package modules
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
-	"github.com/stellar/go/support/config"
 )
 
-type arbitCycleConfig struct {
+// ArbitCycleConfig holds the arbitrage strategy settings
+type ArbitCycleConfig struct {
 	HoldAssetCode   string       `valid:"-" toml:"HOLD_ASSET_CODE"`
 	HoldAssetIssuer string       `valid:"-" toml:"HOLD_ASSET_ISSUER"`
-	Assets          []assetInput `valid:"-" toml:"ASSETS"`
 	MinRatio        float64      `valid:"-" toml:"MIN_RATIO"`
+	UseBalance      bool         `valid:"-" toml:"USE_BALANCE"`
+	StaticAmount    float64      `valid:"-" toml:"STATIC_AMOUNT"`
+	Assets          []assetInput `valid:"-" toml:"ASSETS"`
 }
 
 // PathFinder keeps track of all the possible payment paths
 type PathFinder struct {
 	// multiDex  MultiDex won't reside here
-	api       *horizon.Client
-	HoldAsset *horizon.Asset
-	AssetBook []*horizon.Asset
-	PathList  []PaymentPath
-	l         logger.Logger
+	dexWatcher   DexWatcher
+	HoldAsset    horizon.Asset
+	assetBook    []groupedAsset
+	pathList     []PaymentPath
+	minRatio     float64
+	useBalance   bool
+	staticAmount float64
+	l            logger.Logger
+
+	//unintialized
+	endAssetDisplay string
 }
 
-// assetInput holds the inbound asset strings
-type assetInput struct {
-	CODE   string `valid:"-"`
-	ISSUER string `valid:"-"`
-}
-
-// TradingPair represents a trading pair
-type TradingPair struct {
-	Base  *horizon.Asset
-	Quote *horizon.Asset
-}
-
-// PaymentPath is a pair of assets for a payment path and their encoded tradingPair
-// probably don't need separate PriceFeed concepts if the tradingPair is here
-type PaymentPath struct {
-	PathAssetA *horizon.Asset
-	PathAssetB *horizon.Asset
-	FirstPair  TradingPair
-	MidPair    TradingPair
-	LastPair   TradingPair
-}
-
-// String impl.
-func (c arbitCycleConfig) String() string {
-	return utils.StructString(c, nil)
+type groupedAsset struct {
+	Asset horizon.Asset
+	Group int
 }
 
 // MakePathFinder is a factory method
 func MakePathFinder(
-	api *horizon.Client,
-	stratConfigPath string,
-	simMode bool,
+	dexWatcher DexWatcher,
+	stratConfig ArbitCycleConfig,
+	l logger.Logger,
 ) (*PathFinder, error) {
-	l := logger.MakeBasicLogger()
-	if stratConfigPath == "" {
-		return nil, fmt.Errorf("arbitcycle mode needs a config file")
-	}
+	holdAsset := ParseAsset(stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
 
-	var cfg arbitCycleConfig
-	err := config.Read(stratConfigPath, &cfg)
-	utils.CheckConfigError(cfg, err, stratConfigPath)
-	utils.LogConfig(cfg)
+	var assetBook []groupedAsset
 
-	holdAsset, e := ParseAsset(cfg.HoldAssetCode, cfg.HoldAssetIssuer)
-	if e != nil {
-		return nil, fmt.Errorf("Error while generating holdAsset: %s", e)
-	}
-
-	var assetBook []*horizon.Asset
-
-	for _, a := range cfg.Assets {
-		asset, e := ParseAsset(a.CODE, a.ISSUER)
-		if e != nil {
-			return nil, fmt.Errorf("Error while generating assetBook %s", e)
+	for _, a := range stratConfig.Assets {
+		asset := ParseAsset(a.CODE, a.ISSUER)
+		group := a.GROUP
+		entry := groupedAsset{
+			Asset: asset,
+			Group: group,
 		}
-		assetBook = append(assetBook, asset)
+		assetBook = append(assetBook, entry)
 	}
 
 	var pathList []PaymentPath
+	endAssetDisplay := holdAsset.Code
+
+	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
+		endAssetDisplay = "XLM"
+	}
 
 	l.Info("generating path list: ")
 
 	for i := 0; i < len(assetBook); i++ {
 		for n := 0; n < len(assetBook); n++ {
-			if assetBook[i] != assetBook[n] {
-				path := MakePaymentPath(assetBook[i], assetBook[n], holdAsset)
-				l.Infof("added path: %s -> %s -> %s -> %s", holdAsset, assetBook[i], assetBook[n], holdAsset)
+			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
+				path := makePaymentPath(assetBook[i].Asset, assetBook[n].Asset, holdAsset)
+				l.Infof("added path: %s -> %s -> %s -> %s", endAssetDisplay, assetBook[i].Asset.Code, assetBook[n].Asset.Code, endAssetDisplay)
 				pathList = append(pathList, path)
 			}
 		}
 	}
 
 	return &PathFinder{
-		api:       api,
-		HoldAsset: holdAsset,
-		AssetBook: assetBook,
-		PathList:  pathList,
-		l:         l,
+		dexWatcher:      dexWatcher,
+		HoldAsset:       holdAsset,
+		assetBook:       assetBook,
+		pathList:        pathList,
+		minRatio:        stratConfig.MinRatio,
+		useBalance:      stratConfig.UseBalance,
+		staticAmount:    stratConfig.StaticAmount,
+		l:               l,
+		endAssetDisplay: endAssetDisplay,
 	}, nil
 }
 
-// MakePaymentPath makes a payment path
-func MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asset, holdAsset *horizon.Asset) PaymentPath {
+// assetInput holds the inbound asset strings
+type assetInput struct {
+	CODE   string `valid:"-"`
+	ISSUER string `valid:"-"`
+	GROUP  int    `valid:"-"`
+}
+
+// TradingPair represents a trading pair
+type TradingPair struct {
+	Base  horizon.Asset
+	Quote horizon.Asset
+}
+
+// PaymentPath is a pair of assets for a payment path and their encoded tradingPair
+// probably don't need separate PriceFeed concepts if the tradingPair is here
+type PaymentPath struct {
+	HoldAsset  horizon.Asset
+	PathAssetA horizon.Asset
+	PathAssetB horizon.Asset
+	FirstPair  TradingPair
+	MidPair    TradingPair
+	LastPair   TradingPair
+}
+
+// String impl.
+func (c ArbitCycleConfig) String() string {
+	return utils.StructString(c, nil)
+}
+
+// makePaymentPath makes a payment path
+func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) PaymentPath {
 	firstPair := TradingPair{
 		Base:  assetA,
 		Quote: holdAsset,
@@ -124,6 +136,7 @@ func MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asset, holdAsset *ho
 		Quote: holdAsset,
 	}
 	return PaymentPath{
+		HoldAsset:  holdAsset,
 		PathAssetA: assetA,
 		PathAssetB: assetB,
 		FirstPair:  firstPair,
@@ -132,113 +145,93 @@ func MakePaymentPath(assetA *horizon.Asset, assetB *horizon.Asset, holdAsset *ho
 	}
 }
 
-// FindBestPath determines and returns the most profitable payment path
-func (p *PathFinder) FindBestPath() (*PaymentPath, error) {
+// FindBestPath determines and returns the most profitable payment path, its max amount, and whether its good enough
+func (p *PathFinder) FindBestPath() (*PaymentPath, float64, bool, error) {
 	bestRatio := 0.0
+	maxAmount := 0.0
 	var bestPath PaymentPath
-	for _, b := range p.PathList {
-		ratio, e := p.calculatePathRatio(b)
+
+	for _, b := range p.pathList {
+		ratio, amount, e := p.calculatePathValues(b)
 		if e != nil {
-			return nil, fmt.Errorf("Error while calculating ratios %s", e)
+			return nil, 0, false, fmt.Errorf("Error while calculating ratios %s", e)
 		}
 		if ratio > bestRatio {
 			bestRatio = ratio
-			// if ratio == 0.0 {
-			// 	bestPath := b
-			// } else {
+			maxAmount = amount
 			bestPath = b
-			// }
 		}
-		p.l.Infof("Return ratio for pair %s - > %s was %v \n", b.PathAssetA, b.PathAssetB, ratio)
+		p.l.Infof("Return ratio for path %s -> %s - > %s -> %s was %v \n", p.endAssetDisplay, b.PathAssetA.Code, b.PathAssetB.Code, p.endAssetDisplay, ratio)
 	}
-	p.l.Infof("Best path was %s - > %s with return ratio of %v\n", bestPath.PathAssetA, bestPath.PathAssetB, bestRatio)
+	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio)
+	metThreshold := false
+	if bestRatio >= p.minRatio {
+		metThreshold = true
+		p.l.Info("")
+		p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
+		p.l.Info("")
+	}
 
-	return &bestPath, nil
+	return &bestPath, maxAmount, metThreshold, nil
 }
 
-func (p *PathFinder) calculatePathRatio(path PaymentPath) (float64, error) {
+// calculatePathValues returns the path's best ratio and max amount at that ratio
+func (p *PathFinder) calculatePathValues(path PaymentPath) (float64, float64, error) {
 	// first pair is buying asset A with the hold asset
-	firstPairLowAsk, e := p.GetLowAsk(path.FirstPair)
+	firstPairLowAskPrice, firstPairLowAskAmount, e := p.dexWatcher.GetLowAsk(path.FirstPair)
 	if e != nil {
-		return 0, fmt.Errorf("Error while calculating path ratio %s", e)
+		return 0, 0, fmt.Errorf("Error while calculating path ratio %s", e)
+	}
+	if firstPairLowAskPrice == -1 || firstPairLowAskAmount == -1 {
+		return 0, 0, nil
 	}
 
 	// mid pair is selling asset A for asset B
-	midPairTopBid, e := p.GetTopBid(path.MidPair)
+	midPairTopBidPrice, midPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.MidPair)
 	if e != nil {
-		return 0, fmt.Errorf("Error while calculating path ratio %s", e)
+		return 0, 0, fmt.Errorf("Error while calculating path ratio %s", e)
+	}
+	if midPairTopBidPrice == -1 || midPairTopBidAmount == -1 {
+		return 0, 0, nil
 	}
 
 	// last pair is selling asset B for the hold asset
-	lastPairTopBid, e := p.GetTopBid(path.LastPair)
+	lastPairTopBidPrice, lastPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.LastPair)
 	if e != nil {
-		return 0, fmt.Errorf("Error while calculating path ratio %s", e)
+		return 0, 0, fmt.Errorf("Error while calculating path ratio %s", e)
+	}
+	if lastPairTopBidPrice == -1 || lastPairTopBidAmount == -1 {
+		return 0, 0, nil
 	}
 
-	ratio := (1 / firstPairLowAsk) * midPairTopBid * lastPairTopBid
+	ratio := (1 / firstPairLowAskPrice) * midPairTopBidPrice * lastPairTopBidPrice
 
-	return ratio, nil
+	// max amount is the lowest of the three steps' amounts in units of the hold asset
+	// but has to account for the middle trade that doesn't include the hold asset
+	maxFirstBuy := firstPairLowAskAmount * firstPairLowAskPrice // how many hold asset tokens spendable on the low ask of AssetA
+	maxSecondSell := firstPairLowAskAmount * midPairTopBidPrice // how many AssetB returned if selling max available AssetA
+	if midPairTopBidAmount < maxSecondSell {
+		maxSecondSell = midPairTopBidAmount // if there aren't enough AssetB on offer to get maxSecondSell from above, reduce to the available AssetB
+	}
+	maxLastSell := maxSecondSell * lastPairTopBidPrice // how many hold asset tokens returned if selling max available AssetB
+	if lastPairTopBidAmount < maxLastSell {
+		maxLastSell = lastPairTopBidAmount
+	}
+	// find which end's max is lower
+	maxCycleAmount := maxFirstBuy
+	if maxLastSell < maxFirstBuy {
+		maxCycleAmount = maxLastSell
+	}
+
+	return ratio, maxCycleAmount, nil
 }
 
-// GetTopBid returns the top bid for a trading pair
-func (p *PathFinder) GetTopBid(pair TradingPair) (float64, error) {
-	orderBook, e := p.GetOrderBook(p.api, pair)
-	if e != nil {
-		return 0, fmt.Errorf("unable to get sdex price: %s", e)
-	}
-
-	bids := orderBook.Bids
-	topBidPrice := utils.PriceAsFloat(bids[0].Price)
-
-	return topBidPrice, nil
+// WhatRatio returns the minimum ratio
+func (p *PathFinder) WhatRatio() float64 {
+	return p.minRatio
 }
 
-// GetLowAsk returns the low ask for a trading pair
-func (p *PathFinder) GetLowAsk(pair TradingPair) (float64, error) {
-	orderBook, e := p.GetOrderBook(p.api, pair)
-	if e != nil {
-		return 0, fmt.Errorf("unable to get sdex price: %s", e)
-	}
-
-	asks := orderBook.Asks
-	lowAskPrice := utils.PriceAsFloat(asks[0].Price)
-
-	return lowAskPrice, nil
-}
-
-// GetOrderBook gets the SDEX order book
-func (p *PathFinder) GetOrderBook(api *horizon.Client, pair TradingPair) (orderBook horizon.OrderBookSummary, e error) {
-	baseAsset, quoteAsset := p.pair2Assets(pair)
-	b, e := api.LoadOrderBook(*baseAsset, *quoteAsset)
-	if e != nil {
-		log.Printf("Can't get SDEX orderbook: %s\n", e)
-		return
-	}
-	return b, e
-}
-
-func (p *PathFinder) pair2Assets(pair TradingPair) (*horizon.Asset, *horizon.Asset) {
-	base := pair.Base
-	quote := pair.Quote
-	return base, quote
-}
-
-// ParseAsset returns a horizon asset from strings
-// This is temporary until the sdex feed is merged into Kelp master
-func ParseAsset(code string, issuer string) (*horizon.Asset, error) {
-	if code != "XLM" && issuer == "" {
-		return nil, fmt.Errorf("error: issuer can only be empty if asset is XLM")
-	}
-
-	if code == "XLM" && issuer != "" {
-		return nil, fmt.Errorf("error: issuer needs to be empty if asset is XLM")
-	}
-
-	if code == "XLM" {
-		asset := utils.Asset2Asset2(build.NativeAsset())
-		return &asset, nil
-	}
-
-	asset := utils.Asset2Asset2(build.CreditAsset(code, issuer))
-	return &asset, nil
+// WhatAmount returns the payment amount settings
+func (p *PathFinder) WhatAmount() (bool, float64) {
+	return p.useBalance, p.staticAmount
 }
