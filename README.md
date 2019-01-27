@@ -10,7 +10,7 @@ All of which also adds up to rationalizing price discovery on the SDEX. Pretty g
 
 ### Using Rockfish
 
-Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walkthrough.md)
+Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walkthrough.md). Please note that Rockfish is in _**very**_ early alpha and there are almost certainly bugs to be discovered.
 
 ### Installing Rockfish
 
@@ -23,10 +23,10 @@ Rockfish does not yet have a binary release, so you compile from source. You can
 5. Run Rockfish's `build.sh` from the main Rockfish repo directory `./scripts/build.sh`
 6. You should now have a `bin` folder in your repository with an executable: `rockfish`
 
-### Acknowledgements
+### Acknowledgments
 
 Rockfish is largely built from [Kelp](https://github.com/interstellar/kelp) components and would not be possible without them. Real rockfish live in [kelp forests](https://en.wikipedia.org/wiki/Kelp_forest); hence the name.
 
 #### Disclaimer
 
-Nothing in Rockfish or its documentation should be taken as investment advice. Rockfish is on available as-is, on the terms of the [MIT License](https://github.com/Reidmcc/rockfish/blob/master/LICENSE).
+Nothing in Rockfish or its documentation should be taken as investment advice. Rockfish is available as-is, on the terms of the [MIT License](https://github.com/Reidmcc/rockfish/blob/master/LICENSE).
