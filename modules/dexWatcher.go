@@ -37,7 +37,7 @@ func (w *DexWatcher) GetTopBid(pair TradingPair) (*model.Number, *model.Number, 
 	bids := orderBook.Bids
 	if len(bids) == 0 {
 		//w.l.Infof("No bids for pair: %s - %s ", pair.Base.Code, pair.Quote.Code)
-		return nil, nil, nil
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
 	topBidPrice, e := model.NumberFromString(bids[0].Price, utils.SdexPrecision)
 	if e != nil {
@@ -63,7 +63,7 @@ func (w *DexWatcher) GetLowAsk(pair TradingPair) (*model.Number, *model.Number, 
 	asks := orderBook.Asks
 	if len(asks) == 0 {
 		//w.l.Infof("No asks for pair: %s - %s ", pair.Base.Code, pair.Quote.Code)
-		return nil, nil, nil
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
 	lowAskPrice, e := model.NumberFromString(asks[0].Price, utils.SdexPrecision)
 	if e != nil {

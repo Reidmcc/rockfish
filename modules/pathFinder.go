@@ -27,9 +27,9 @@ type PathFinder struct {
 	HoldAsset    horizon.Asset
 	assetBook    []groupedAsset
 	pathList     []PaymentPath
-	minRatio     float64
+	minRatio     *model.Number
 	useBalance   bool
-	staticAmount float64
+	staticAmount *model.Number
 	l            logger.Logger
 
 	//unintialized
@@ -85,9 +85,9 @@ func MakePathFinder(
 		HoldAsset:       holdAsset,
 		assetBook:       assetBook,
 		pathList:        pathList,
-		minRatio:        stratConfig.MinRatio,
+		minRatio:        model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
 		useBalance:      stratConfig.UseBalance,
-		staticAmount:    stratConfig.StaticAmount,
+		staticAmount:    model.NumberFromFloat(stratConfig.StaticAmount, utils.SdexPrecision),
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
 	}, nil
@@ -148,7 +148,7 @@ func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horiz
 
 // FindBestPath determines and returns the most profitable payment path, its max amount, and whether its good enough
 func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
-	var bestRatio *model.Number
+	bestRatio := model.NumberConstants.Zero
 	maxAmount := model.NumberConstants.Zero
 	var bestPath PaymentPath
 
@@ -157,20 +157,18 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 		if e != nil {
 			return nil, nil, false, fmt.Errorf("Error while calculating ratios %s", e)
 		}
-		if ratio != nil && bestRatio != nil && ratio.AsFloat() > bestRatio.AsFloat() {
+
+		if ratio.AsFloat() > bestRatio.AsFloat() {
 			bestRatio = ratio
 			maxAmount = amount
 			bestPath = b
 		}
-		if ratio != nil {
-			p.l.Infof("Return ratio for path %s -> %s - > %s -> %s was %s \n", p.endAssetDisplay, b.PathAssetA.Code, b.PathAssetB.Code, p.endAssetDisplay, ratio.AsString())
-		}
+		p.l.Infof("Return ratio for path %s -> %s - > %s -> %s was %s \n", p.endAssetDisplay, b.PathAssetA.Code, b.PathAssetB.Code, p.endAssetDisplay, ratio.AsString())
 	}
-	if bestRatio != nil {
-		p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %s\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsString())
-	}
+	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %s\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsString())
+
 	metThreshold := false
-	if bestRatio != nil && bestRatio.AsFloat() >= p.minRatio {
+	if bestRatio.AsFloat() >= p.minRatio.AsFloat() {
 		metThreshold = true
 		p.l.Info("")
 		p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
@@ -187,8 +185,8 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	if e != nil {
 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
 	}
-	if firstPairLowAskPrice == nil || firstPairLowAskAmount == nil {
-		return nil, nil, nil
+	if firstPairLowAskPrice == model.NumberConstants.Zero || firstPairLowAskAmount == model.NumberConstants.Zero {
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
 
 	// get a number formated 1 for calcs
@@ -199,8 +197,8 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	if e != nil {
 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
 	}
-	if midPairTopBidPrice == nil || midPairTopBidAmount == nil {
-		return nil, nil, nil
+	if midPairTopBidPrice == model.NumberConstants.Zero || midPairTopBidAmount == model.NumberConstants.Zero {
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
 
 	// last pair is selling asset B for the hold asset
@@ -208,16 +206,19 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	if e != nil {
 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
 	}
-	if lastPairTopBidPrice == nil || lastPairTopBidAmount == nil {
-		return nil, nil, nil
+	if lastPairTopBidPrice == model.NumberConstants.Zero || lastPairTopBidAmount == model.NumberConstants.Zero {
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
 	// is this backwards?
 	//ratio := (1 / firstPairLowAskPrice) * midPairTopBidPrice * lastPairTopBidPrice
-	ratioStep := one.Divide(*firstPairLowAskPrice)
-	ratioStep = ratioStep.Multiply(*midPairTopBidPrice)
-	ratioStep = ratioStep.Multiply(*lastPairTopBidPrice)
+	ratio := model.NumberConstants.Zero
 
-	ratio := ratioStep
+	if firstPairLowAskPrice.AsFloat() > 0 {
+		ratioStep := one.Divide(*firstPairLowAskPrice)
+		ratioStep = ratioStep.Multiply(*midPairTopBidPrice)
+		ratioStep = ratioStep.Multiply(*lastPairTopBidPrice)
+		ratio = ratioStep
+	}
 
 	// means ratio := Amount A received; sold for listed price of B; Amount B received sold for hold math looks right.
 
@@ -242,11 +243,11 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 }
 
 // WhatRatio returns the minimum ratio
-func (p *PathFinder) WhatRatio() float64 {
+func (p *PathFinder) WhatRatio() *model.Number {
 	return p.minRatio
 }
 
 // WhatAmount returns the payment amount settings
-func (p *PathFinder) WhatAmount() (bool, float64) {
+func (p *PathFinder) WhatAmount() (bool, *model.Number) {
 	return p.useBalance, p.staticAmount
 }
