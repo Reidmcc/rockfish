@@ -234,7 +234,7 @@ func (dA *DexAgent) minReserve(subentries int32) float64 {
 }
 
 // SendPaymentCycle executes a payment cycle
-func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount float64) error {
+func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number) error {
 	if dA.useBalance {
 		e := dA.payWithBalance(path, maxAmount)
 		if e != nil {
@@ -250,15 +250,17 @@ func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount float64) error
 	return nil
 }
 
-func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount float64) error {
+func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount *model.Number) error {
 	balance, e := dA.JustAssetBalance(path.HoldAsset)
 	if e != nil {
 		return fmt.Errorf("error getting account hold asset balance %s", e)
 	}
-	payAmount := balance
-	if maxAmount < balance {
+	payAmount := model.NumberFromFloat(balance, utils.SdexPrecision)
+	dA.l.Infof("balance return to payWithBalance received amount of: %v", payAmount)
+	if maxAmount.AsFloat() < payAmount.AsFloat() {
 		payAmount = maxAmount
 	}
+	dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
 	payOp, e := dA.MakePathPayment(path, payAmount, dA.minRatio)
 	if e != nil {
 		return fmt.Errorf("Error submitting path payment op: %s", e)
@@ -275,12 +277,14 @@ func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount float64) error {
 	return nil
 }
 
-func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount float64) error {
-	payAmount := dA.baseAmount
-	if maxAmount < dA.baseAmount {
+func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) error {
+	payAmount := model.NumberFromFloat(dA.baseAmount, utils.SdexPrecision)
+	dA.l.Infof("payWithAmount received amount of: %v", payAmount)
+	dA.l.Infof("dA.baseAmount value checked against was: %v", dA.baseAmount)
+	if maxAmount.AsFloat() < payAmount.AsFloat() {
 		payAmount = maxAmount
 	}
-
+	dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
 	payOp, e := dA.MakePathPayment(path, payAmount, dA.minRatio)
 	if e != nil {
 		return fmt.Errorf("Error submitting path payment op: %s", e)
@@ -299,16 +303,27 @@ func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount float64) error {
 }
 
 // MakePathPayment constructs and returns a path payment transaction for a given path object
-func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount float64, minRatio float64) (build.PaymentBuilder, error) {
+func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, minRatio float64) (build.PaymentBuilder, error) {
 	holdAsset, throughAssetA, throughAssetB := Path2Assets(path)
-	receiveAmount := model.NumberFromFloat(amount, utils.SdexPrecision).AsString()
-	maxPayAmount := model.NumberFromFloat(amount*(1/minRatio), utils.SdexPrecision).AsString()
+	receiveAmount := amount.AsString()
+	//maxPayAmount := model.NumberFromFloat(amount*(1/minRatio), utils.SdexPrecision).AsString() //seems to be calculating too low
+	//just don't allow loss for now:
+	//ugh, setting higher to diagnose op_over_source_max:
+	//ok, it was a legit amount error, but the ratio should work if I'm doing it right
+	// adding fee with one extra for padding to see if the fee is the problem
+	// so we could lose up to our fee
+	feePad := model.NumberFromFloat(baseFee*4, utils.SdexPrecision)
+	maxPayAmount := amount.Add(*feePad).AsString()
+
+	//it always displays full max but doesn't charge that much if real rates lower
 	dA.l.Infof("Set receiveAmount to: %s", receiveAmount)
-	dA.l.Infof("Set maxPayAmount to: %s", receiveAmount)
+	dA.l.Infof("Set maxPayAmount to: %s", maxPayAmount)
 
 	pw := build.PayWith(utils.Asset2Asset(holdAsset), maxPayAmount)
 	pw = pw.Through(utils.Asset2Asset(throughAssetA))
 	pw = pw.Through(utils.Asset2Asset(throughAssetB))
+
+	dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
 	// payDest := build.Destination{
 	// 	AddressOrSeed: dA.TradingAccount,
