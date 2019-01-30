@@ -154,6 +154,7 @@ func init() {
 			stratConfig.MinRatio,
 			stratConfig.UseBalance,
 			stratConfig.StaticAmount,
+			stratConfig.MinAmount,
 			*simMode,
 			l,
 		)
