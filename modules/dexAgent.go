@@ -29,7 +29,8 @@ type DexAgent struct {
 	Network           build.Network
 	threadTracker     *multithreading.ThreadTracker
 	operationalBuffer float64
-	minRatio          float64
+	minRatio          *model.Number
+	minAmount         *model.Number
 	useBalance        bool
 	simMode           bool
 	l                 logger.Logger
@@ -37,7 +38,7 @@ type DexAgent struct {
 	// uninitialized
 	seqNum       uint64
 	reloadSeqNum bool
-	baseAmount   float64
+	baseAmount   *model.Number
 }
 
 // MakeDexAgent is the factory method
@@ -53,9 +54,12 @@ func MakeDexAgent(
 	minRatio float64,
 	useBalance bool,
 	staticAmount float64,
+	minAmount float64,
 	simMode bool,
 	l logger.Logger,
 ) *DexAgent {
+	//convertRatio := model.NumberFromFloat(minRatio, utils.SdexPrecision)
+	//convert
 	dexAgent := &DexAgent{
 		API:               api,
 		SourceSeed:        sourceSeed,
@@ -65,7 +69,8 @@ func MakeDexAgent(
 		Network:           network,
 		threadTracker:     threadTracker,
 		operationalBuffer: operationalBuffer,
-		minRatio:          minRatio,
+		minRatio:          model.NumberFromFloat(minRatio, utils.SdexPrecision),
+		minAmount:         model.NumberFromFloat(minAmount, utils.SdexPrecision),
 		useBalance:        useBalance,
 		simMode:           simMode,
 		l:                 l,
@@ -78,7 +83,7 @@ func MakeDexAgent(
 	}
 
 	if !useBalance {
-		dexAgent.baseAmount = staticAmount
+		dexAgent.baseAmount = model.NumberFromFloat(staticAmount, utils.SdexPrecision)
 	}
 
 	dexAgent.reloadSeqNum = true
@@ -144,6 +149,7 @@ func (dA *DexAgent) JustAssetBalance(asset horizon.Asset) (float64, error) {
 
 // SubmitOps submits the passed in operations to the network asynchronously in a single transaction
 func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func(hash string, e error)) error {
+	dA.reloadSeqNum = true
 	dA.incrementSeqNum()
 	muts := []build.TransactionMutator{
 		build.Sequence{Sequence: dA.seqNum},
@@ -278,7 +284,7 @@ func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount *model.Number) e
 }
 
 func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) error {
-	payAmount := model.NumberFromFloat(dA.baseAmount, utils.SdexPrecision)
+	payAmount := dA.baseAmount
 	dA.l.Infof("payWithAmount received amount of: %v", payAmount)
 	dA.l.Infof("dA.baseAmount value checked against was: %v", dA.baseAmount)
 	if maxAmount.AsFloat() < payAmount.AsFloat() {
@@ -303,19 +309,12 @@ func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) er
 }
 
 // MakePathPayment constructs and returns a path payment transaction for a given path object
-func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, minRatio float64) (build.PaymentBuilder, error) {
+func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, minRatio *model.Number) (build.PaymentBuilder, error) {
 	holdAsset, throughAssetA, throughAssetB := Path2Assets(path)
 	receiveAmount := amount.AsString()
-	//maxPayAmount := model.NumberFromFloat(amount*(1/minRatio), utils.SdexPrecision).AsString() //seems to be calculating too low
-	//just don't allow loss for now:
-	//ugh, setting higher to diagnose op_over_source_max:
-	//ok, it was a legit amount error, but the ratio should work if I'm doing it right
-	// adding fee with one extra for padding to see if the fee is the problem
-	// so we could lose up to our fee
-	feePad := model.NumberFromFloat(baseFee*4, utils.SdexPrecision)
-	maxPayAmount := amount.Add(*feePad).AsString()
+	maxPayAmount := amount.AsString()
 
-	//it always displays full max but doesn't charge that much if real rates lower
+	//SDEX transactions always displays full max but doesn't charge that much if real rates lower
 	dA.l.Infof("Set receiveAmount to: %s", receiveAmount)
 	dA.l.Infof("Set maxPayAmount to: %s", maxPayAmount)
 
@@ -325,13 +324,7 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 
 	dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
-	// payDest := build.Destination{
-	// 	AddressOrSeed: dA.TradingAccount,
-	// }
-
 	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
-		// payAmount := build.NativeAmount{
-		// 	Amount: receiveAmount}
 
 		payOp := build.Payment(
 			build.Destination{AddressOrSeed: dA.TradingAccount},
@@ -339,31 +332,8 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 			pw,
 		)
 
-		// payOp.Mutate(
-		// 	build.Destination{AddressOrSeed: dA.TradingAccount},
-		// 	path.HoldAsset,
-		// 	build.NativeAmount{Amount: receiveAmount},
-		// 	//pw,
-		// )
-
-		// tx, e := build.Transaction(
-		// 	build.Sequence{Sequence: dA.seqNum},
-		// 	dA.Network,
-		// 	build.SourceAccount{AddressOrSeed: dA.SourceAccount},
-		// 	payOp,
-		// )
-		// if e != nil {
-		// 	return nil, fmt.Errorf("Tranaction build failed: %s", e)
-		// }
-
 		return payOp, nil
 	}
-
-	// payAmount := build.CreditAmount{
-	// 	Code:   holdAsset.Code,
-	// 	Issuer: holdAsset.Issuer,
-	// 	Amount: receiveAmount,
-	// }
 
 	payOp := build.Payment(
 		build.Destination{AddressOrSeed: dA.TradingAccount},
@@ -375,45 +345,13 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 		pw,
 	)
 
-	// tx, e := build.Transaction(
-	// 	build.Sequence{Sequence: dA.seqNum},
-	// 	dA.Network,
-	// 	build.SourceAccount{AddressOrSeed: dA.SourceAccount},
-	// 	payOp,
-	// )
-	// if e != nil {
-	// 	return nil, fmt.Errorf("Tranaction build failed: %s", e)
-	// }
-
 	return payOp, nil
 
-	// payOp.Mutate(
-	// 	build.Destination{
-	// 		AddressOrSeed: dA.TradingAccount,
-	// 	},
-	// 	path.HoldAsset,
-	// 	build.CreditAmount{
-	// 		Code:   holdAsset.Code,
-	// 		Issuer: holdAsset.Issuer,
-	// 		Amount: receiveAmount,
-	// 	},
-	//pw,
-	// )
 }
 
-// SumbitPayments submits a fully built payment transaction to the network asynchronously in a single transaction
+// SumbitPayments submits a fully built payment transaction to the network asynchronously. Not fully tested
 func (dA *DexAgent) SumbitPayments(tx *build.TransactionBuilder, asyncCallback func(hash string, e error)) error {
-	//dA.incrementSeqNum()
-	// muts := []build.TransactionMutator{
-	// 	build.Sequence{Sequence: dA.seqNum},
-	// 	dA.Network,
-	// 	build.SourceAccount{AddressOrSeed: dA.SourceAccount},
-	// }
-	// muts = append(muts, ops...)
-	// tx, e := build.Transaction(muts...)
-	// if e != nil {
-	// 	return errors.Wrap(e, "SubmitOps error: ")
-	// }
+	dA.incrementSeqNum()
 
 	// convert to xdr string
 	txeB64, e := dA.sign(tx)

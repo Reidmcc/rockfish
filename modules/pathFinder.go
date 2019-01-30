@@ -17,12 +17,12 @@ type ArbitCycleConfig struct {
 	MinRatio        float64      `valid:"-" toml:"MIN_RATIO"`
 	UseBalance      bool         `valid:"-" toml:"USE_BALANCE"`
 	StaticAmount    float64      `valid:"-" toml:"STATIC_AMOUNT"`
+	MinAmount       float64      `valid:"-" toml:"MIN_AMOUNT"`
 	Assets          []assetInput `valid:"-" toml:"ASSETS"`
 }
 
 // PathFinder keeps track of all the possible payment paths
 type PathFinder struct {
-	// multiDex  MultiDex won't reside here
 	dexWatcher   DexWatcher
 	HoldAsset    horizon.Asset
 	assetBook    []groupedAsset
@@ -30,6 +30,7 @@ type PathFinder struct {
 	minRatio     *model.Number
 	useBalance   bool
 	staticAmount *model.Number
+	minAmount    *model.Number
 	l            logger.Logger
 
 	//unintialized
@@ -88,6 +89,7 @@ func MakePathFinder(
 		minRatio:        model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
 		useBalance:      stratConfig.UseBalance,
 		staticAmount:    model.NumberFromFloat(stratConfig.StaticAmount, utils.SdexPrecision),
+		minAmount:       model.NumberFromFloat(stratConfig.MinAmount, utils.SdexPrecision),
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
 	}, nil
@@ -124,9 +126,10 @@ func (c ArbitCycleConfig) String() string {
 
 // makePaymentPath makes a payment path
 func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) PaymentPath {
+	// first pair is selling hold for asset A, so inverted from the intuitive
 	firstPair := TradingPair{
-		Base:  assetA,
-		Quote: holdAsset,
+		Base:  holdAsset,
+		Quote: assetA,
 	}
 	midPair := TradingPair{
 		Base:  assetA,
@@ -158,14 +161,14 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 			return nil, nil, false, fmt.Errorf("Error while calculating ratios %s", e)
 		}
 
-		if ratio.AsFloat() > bestRatio.AsFloat() {
+		if ratio.AsFloat() > bestRatio.AsFloat() && amount.AsFloat() > p.minAmount.AsFloat() {
 			bestRatio = ratio
 			maxAmount = amount
 			bestPath = b
 		}
-		p.l.Infof("Return ratio for path %s -> %s - > %s -> %s was %s \n", p.endAssetDisplay, b.PathAssetA.Code, b.PathAssetB.Code, p.endAssetDisplay, ratio.AsString())
+		p.l.Infof("Return ratio | Cycle amount for path %s -> %s - > %s -> %s was %v | %v\n", p.endAssetDisplay, b.PathAssetA.Code, b.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), amount.AsFloat())
 	}
-	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %s\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsString())
+	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
 
 	metThreshold := false
 	if bestRatio.AsFloat() >= p.minRatio.AsFloat() {
@@ -179,18 +182,17 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 }
 
 // calculatePathValues returns the path's best ratio and max amount at that ratio
+// TODO: change this to accept a list of pairs and loop
 func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *model.Number, error) {
 	// first pair is buying asset A with the hold asset
-	firstPairLowAskPrice, firstPairLowAskAmount, e := p.dexWatcher.GetLowAsk(path.FirstPair)
+	// switch to selling direction, which means switch first pair factory order
+	firstPairTopBidPrice, firstPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.FirstPair)
 	if e != nil {
 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
 	}
-	if firstPairLowAskPrice == model.NumberConstants.Zero || firstPairLowAskAmount == model.NumberConstants.Zero {
+	if firstPairTopBidPrice == model.NumberConstants.Zero || firstPairTopBidAmount == model.NumberConstants.Zero {
 		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
-
-	// get a number formated 1 for calcs
-	one := model.NumberFromFloat(1.0, utils.SdexPrecision)
 
 	// mid pair is selling asset A for asset B
 	midPairTopBidPrice, midPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.MidPair)
@@ -209,35 +211,44 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	if lastPairTopBidPrice == model.NumberConstants.Zero || lastPairTopBidAmount == model.NumberConstants.Zero {
 		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
 	}
-	// is this backwards?
-	//ratio := (1 / firstPairLowAskPrice) * midPairTopBidPrice * lastPairTopBidPrice
+
+	// initialize as zero to prevent nil pointers. shouldn't be necessary with above returns, but safer
 	ratio := model.NumberConstants.Zero
 
-	if firstPairLowAskPrice.AsFloat() > 0 {
-		ratioStep := one.Divide(*firstPairLowAskPrice)
-		ratioStep = ratioStep.Multiply(*midPairTopBidPrice)
-		ratioStep = ratioStep.Multiply(*lastPairTopBidPrice)
-		ratio = ratioStep
-	}
-
-	// means ratio := Amount A received; sold for listed price of B; Amount B received sold for hold math looks right.
+	ratio = firstPairTopBidPrice.Multiply(*midPairTopBidPrice)
+	ratio = ratio.Multiply(*lastPairTopBidPrice)
 
 	// max amount is the lowest of the three steps' amounts in units of the hold asset
 	// but has to account for the middle trade that doesn't include the hold asset
-	maxFirstBuy := firstPairLowAskAmount.Multiply(*firstPairLowAskPrice) // how many hold asset tokens spendable on the low ask of AssetA
-	maxSecondSell := firstPairLowAskAmount.Multiply(*midPairTopBidPrice) // how many AssetB returned if selling max available AssetA
-	if midPairTopBidAmount.AsFloat() < maxSecondSell.AsFloat() {
-		maxSecondSell = midPairTopBidAmount // if there aren't enough AssetB on offer to get maxSecondSell from above, reduce to the available AssetB
+	// So find greater of how much AssetB you could get vs. how much you could sell
+
+	// input is straightforward, set amount candidate to that
+	maxCycleAmount := firstPairTopBidAmount.Divide(*firstPairTopBidPrice)
+	// p.l.Infof("First pair amount max calced at %v", maxCycleAmount.AsFloat())
+
+	// now get lower of AssetB amounts
+	maxBsell := lastPairTopBidAmount.Divide(*lastPairTopBidPrice)
+	// p.l.Infof("maxBsell as lastPairTopBidAmount/price calced at %v", lastPairTopBidAmount.AsFloat())
+	maxBreceive := midPairTopBidAmount
+	// p.l.Infof("maxBreceived as midPairTopBidAmount calced at %v", midPairTopBidAmount.AsFloat())
+	if maxBreceive.AsFloat() < maxBsell.AsFloat() {
+		maxBsell = maxBreceive
 	}
-	maxLastSell := maxSecondSell.Multiply(*lastPairTopBidPrice) // how many hold asset tokens returned if selling max available AssetB
-	if lastPairTopBidAmount.AsFloat() < maxLastSell.AsFloat() {
-		maxLastSell = lastPairTopBidAmount
+
+	maxLastReceive := maxBsell.Multiply(*lastPairTopBidPrice)
+	// p.l.Infof("maxLastReceived calced as lesser of maxBsell and maxBreceive at %v", maxLastReceive.AsFloat())
+
+	if maxLastReceive.AsFloat() < maxCycleAmount.AsFloat() {
+		maxCycleAmount = maxLastReceive
 	}
-	// find which end's max is lower
-	maxCycleAmount := maxFirstBuy
-	if maxLastSell.AsFloat() < maxFirstBuy.AsFloat() {
-		maxCycleAmount = maxLastSell
-	}
+
+	// log lines to check calcs
+	// p.l.Infof("First pair: Amount = %v | Price = %v", firstPairTopBidAmount.AsFloat(), firstPairTopBidPrice.AsFloat())
+	// p.l.Infof("Mid pair: Amount = %v | Price = %v", midPairTopBidAmount.AsFloat(), midPairTopBidPrice.AsFloat())
+	// p.l.Infof("Last pair: Amount = %v | Price = %v", lastPairTopBidAmount.AsFloat(), lastPairTopBidPrice.AsFloat())
+
+	// p.l.Infof("After max amount checks, set cycle amount to %v", maxCycleAmount.AsFloat())
+	// p.l.Info("")
 
 	return ratio, maxCycleAmount, nil
 }
