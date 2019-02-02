@@ -39,3 +39,23 @@ func Pair2Assets(pair TradingPair) (horizon.Asset, horizon.Asset) {
 	quote := pair.Quote
 	return base, quote
 }
+
+// PathAsset2Asset turns a PathRecord asset into a horizon asset
+func PathAsset2Asset(p PathAsset) horizon.Asset {
+	asset := ParseAsset(p.AssetCode, p.AssetIssuer)
+	return asset
+}
+
+// PathAsset2BuildAsset turns a PathRecord asset into a build asset
+func PathAsset2BuildAsset(p PathAsset) build.Asset {
+	isNative := false
+	if p.AssetType == "native" {
+		isNative = true
+	}
+
+	return build.Asset{
+		Code:   p.AssetCode,
+		Issuer: p.AssetIssuer,
+		Native: isNative,
+	}
+}

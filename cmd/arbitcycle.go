@@ -159,7 +159,12 @@ func init() {
 			l,
 		)
 
-		dexWatcher := modules.MakeDexWatcher(client, utils.ParseNetwork(arbitConfig.HorizonURL), l)
+		dexWatcher := modules.MakeDexWatcher(
+			client,
+			utils.ParseNetwork(arbitConfig.HorizonURL),
+			arbitConfig.SourceAccount(),
+			arbitConfig.TradingAccount(),
+			l)
 
 		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, l)
 		if e != nil {

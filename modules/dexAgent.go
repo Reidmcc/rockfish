@@ -162,6 +162,7 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		return errors.Wrap(e, "SubmitOps error: ")
 	}
 
+	dA.l.Infof("Pre-XDR raw was: %s", tx)
 	// convert to xdr string
 	txeB64, e := dA.sign(tx)
 	if e != nil {
@@ -285,12 +286,12 @@ func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount *model.Number) e
 
 func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) error {
 	payAmount := dA.baseAmount
-	dA.l.Infof("payWithAmount received amount of: %v", payAmount)
-	dA.l.Infof("dA.baseAmount value checked against was: %v", dA.baseAmount)
+	// dA.l.Infof("payWithAmount received amount of: %v", payAmount)
+	// dA.l.Infof("dA.baseAmount value checked against was: %v", dA.baseAmount)
 	if maxAmount.AsFloat() < payAmount.AsFloat() {
 		payAmount = maxAmount
 	}
-	dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
+	// dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
 	payOp, e := dA.MakePathPayment(path, payAmount, dA.minRatio)
 	if e != nil {
 		return fmt.Errorf("Error submitting path payment op: %s", e)
@@ -312,19 +313,42 @@ func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) er
 func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, minRatio *model.Number) (build.PaymentBuilder, error) {
 	holdAsset, throughAssetA, throughAssetB := Path2Assets(path)
 	receiveAmount := amount.AsString()
-	maxPayAmount := amount.AsString()
+
+	numFee := model.NumberFromFloat(baseFee, utils.SdexPrecision)
+	maxPayAmount := amount.Subtract(*numFee).AsString()
+
+	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
+	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
 
 	//SDEX transactions always displays full max but doesn't charge that much if real rates lower
-	dA.l.Infof("Set receiveAmount to: %s", receiveAmount)
-	dA.l.Infof("Set maxPayAmount to: %s", maxPayAmount)
+	// dA.l.Infof("Set receiveAmount to: %s", receiveAmount)
+	// dA.l.Infof("Set maxPayAmount to: %s", maxPayAmount)
 
-	pw := build.PayWith(utils.Asset2Asset(holdAsset), maxPayAmount)
-	pw = pw.Through(utils.Asset2Asset(throughAssetA))
-	pw = pw.Through(utils.Asset2Asset(throughAssetB))
+	//pre-converting before building in case doing the conversion inside the build.Paywith or pw.Through is screwing stuff up
+	convertHoldAsset := utils.Asset2Asset(holdAsset)
+	convertAssetA := utils.Asset2Asset(throughAssetA)
+	convertAssetB := utils.Asset2Asset(throughAssetB)
 
-	dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
+	// dA.l.Info("")
+	// dA.l.Info("After conversion to build.Asset format assets were:")
+	// dA.l.Infof("Hold Asset: %s|%s", convertHoldAsset.Code, convertHoldAsset.Issuer)
+	// dA.l.Infof("AssetA: %s|%s", convertAssetA.Code, convertAssetA.Issuer)
+	// dA.l.Infof("AssetA: %s|%s", convertAssetB.Code, convertAssetB.Issuer)
+	// dA.l.Info("")
 
-	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
+	pw := build.PayWith(convertHoldAsset, maxPayAmount)
+	// dA.l.Infof("Initial PayWith set to: %s", pw)
+	pw = pw.Through(convertAssetA)
+	// dA.l.Infof("With first Through is: %s", pw)
+	pw = pw.Through(convertAssetB)
+	// dA.l.Infof("With second Through is: %s", pw)
+
+	dA.l.Infof("Raw build.PayWith set to: %s", pw)
+
+	// dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
+
+	if convertHoldAsset == build.NativeAsset() {
+		// dA.l.Info("Triggered holdAsset is NativeAsset check")
 
 		payOp := build.Payment(
 			build.Destination{AddressOrSeed: dA.TradingAccount},
@@ -332,14 +356,17 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 			pw,
 		)
 
+		//payOp.Mutate(build.PayWithPath{pw})
+
 		return payOp, nil
 	}
 
+	// dA.l.Info("Building as creditAmount")
 	payOp := build.Payment(
 		build.Destination{AddressOrSeed: dA.TradingAccount},
 		build.CreditAmount{
-			Code:   holdAsset.Code,
-			Issuer: holdAsset.Issuer,
+			Code:   convertHoldAsset.Code,
+			Issuer: convertHoldAsset.Issuer,
 			Amount: receiveAmount,
 		},
 		pw,
@@ -349,26 +376,83 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 
 }
 
-// SumbitPayments submits a fully built payment transaction to the network asynchronously. Not fully tested
-func (dA *DexAgent) SumbitPayments(tx *build.TransactionBuilder, asyncCallback func(hash string, e error)) error {
-	dA.incrementSeqNum()
+// SendByFoundPath executes a payment cycle for the find-path protocol
+func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, maxAmount *model.Number) error {
 
-	// convert to xdr string
-	txeB64, e := dA.sign(tx)
+	payOp, e := dA.makePathPaymentredux(path, holdAsset, maxAmount)
 	if e != nil {
-		return e
+		return fmt.Errorf("Error trying to send via found path")
 	}
-	dA.l.Infof("tx XDR: %s\n", txeB64)
 
-	// submit
-	if !dA.simMode {
-		dA.l.Info("submitting tx XDR to network (async)")
-		dA.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-			dA.submit(txeB64, asyncCallback)
-		}, nil)
-	} else {
-		dA.l.Info("not submitting tx XDR to network in simulation mode, calling asyncCallback with empty hash value")
-		dA.invokeAsyncCallback(asyncCallback, "", nil)
+	var opList []build.TransactionMutator
+	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
+	opList = append(opList, payOp)
+
+	e = dA.SubmitOps(opList, nil)
+	if e != nil {
+		return fmt.Errorf("Error submitting path payment op: %s", e)
 	}
+
 	return nil
+}
+
+// makePathPaymentredux contructs a path payment from a find-path PathRecord
+func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon.Asset, amount *model.Number) (*build.PaymentBuilder, error) {
+
+	// if not using balance the amount will have already been adjusted to the static amount
+	if dA.useBalance == true {
+		balance, e := dA.JustAssetBalance(*holdAsset)
+		numBalanace := model.NumberFromFloat(balance, utils.SdexPrecision)
+		if e != nil {
+			return nil, fmt.Errorf("Error creating path payment op: %s", e)
+		}
+
+		if numBalanace.AsFloat() < amount.AsFloat() {
+			amount = numBalanace
+		}
+
+	}
+
+	receiveAmount := amount.AsString()
+
+	// numFee := model.NumberFromFloat(baseFee, utils.SdexPrecision)
+	// maxPayAmount := amount.Subtract(*numFee).AsString()
+	maxPayAmount := amount.AsString()
+
+	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
+	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
+
+	convertHoldAsset := utils.Asset2Asset(*holdAsset)
+
+	pw := build.PayWith(convertHoldAsset, maxPayAmount)
+
+	for i := 0; i < len(payPath.Path); i++ {
+		dA.l.Infof("Adding to payment path: %s|%s", payPath.Path[i].AssetCode, payPath.Path[i].AssetIssuer)
+		convertAsset := PathAsset2BuildAsset(payPath.Path[i])
+		pw = pw.Through(convertAsset)
+	}
+
+	dA.l.Infof("Raw build.PayWith set to: %s", pw)
+
+	if convertHoldAsset == build.NativeAsset() {
+
+		payOp := build.Payment(
+			build.Destination{AddressOrSeed: dA.TradingAccount},
+			build.NativeAmount{Amount: receiveAmount},
+			pw,
+		)
+		return &payOp, nil
+	}
+
+	payOp := build.Payment(
+		build.Destination{AddressOrSeed: dA.TradingAccount},
+		build.CreditAmount{
+			Code:   convertHoldAsset.Code,
+			Issuer: convertHoldAsset.Issuer,
+			Amount: receiveAmount,
+		},
+		pw,
+	)
+
+	return &payOp, nil
 }

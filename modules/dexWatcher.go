@@ -1,8 +1,11 @@
 package modules
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"strings"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -13,19 +16,30 @@ import (
 
 // DexWatcher is an object that queries the DEX
 type DexWatcher struct {
-	API     *horizon.Client
-	Network build.Network
-	l       logger.Logger
+	API            *horizon.Client
+	Network        build.Network
+	SourceAccount  string
+	TradingAccount string
+	l              logger.Logger
 }
 
 // MakeDexWatcher is the factory method
-func MakeDexWatcher(api *horizon.Client, network build.Network, l logger.Logger) *DexWatcher {
+func MakeDexWatcher(
+	api *horizon.Client,
+	network build.Network,
+	sourceAccount string,
+	tradingAccount string,
+	l logger.Logger) *DexWatcher {
 	return &DexWatcher{
-		API:     api,
-		Network: network,
-		l:       l,
+		API:            api,
+		Network:        network,
+		SourceAccount:  sourceAccount,
+		TradingAccount: tradingAccount,
+		l:              l,
 	}
 }
+
+// type pathResponse
 
 // GetTopBid returns the top bid's price and amount for a trading pair
 func (w *DexWatcher) GetTopBid(pair TradingPair) (*model.Number, *model.Number, error) {
@@ -87,5 +101,47 @@ func (w *DexWatcher) GetOrderBook(api *horizon.Client, pair TradingPair) (orderB
 		log.Printf("Can't get SDEX orderbook: %s\n", e)
 		return
 	}
+
 	return b, e
+}
+
+// GetPaths gets and parses the find-path data for an asset from horizon
+func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number) (*FindPathResponse, error) {
+	var s strings.Builder
+	var paths FindPathResponse
+	amountString := amount.AsString()
+
+	s.WriteString(fmt.Sprintf("%s/paths?source_account=%s", w.API.URL, w.TradingAccount))
+	s.WriteString(fmt.Sprintf("&destination_account=%s", w.TradingAccount))
+	s.WriteString(fmt.Sprintf("&destination_asset_type=%s", endAsset.Type))
+	s.WriteString(fmt.Sprintf("&destination_asset_code=%s", endAsset.Code))
+	s.WriteString(fmt.Sprintf("&destination_asset_issuer=%s", endAsset.Issuer))
+	s.WriteString(fmt.Sprintf("&destination_amount=%s", amountString))
+
+	//w.l.Infof("GET string built as: %s", s.String())
+
+	resp, e := w.API.HTTP.Get(s.String())
+
+	//resp, e := w.API.HTTP.Get("https://horizon.stellar.org/paths?source_account=GDJQ7DGRBAPJMBMDNDZIBCW4SFZ55GWEHYEPGLRJQW46NGBUSYSCLSLV&destination_account=GDJQ7DGRBAPJMBMDNDZIBCW4SFZ55GWEHYEPGLRJQW46NGBUSYSCLSLV&destination_asset_type=credit_alphanum4&destination_asset_code=BTC&destination_asset_issuer=GBSTRH4QOTWNSVA6E4HFERETX4ZLSR3CIUBLK7AXYII277PFJC4BBYOG&destination_amount=.0000001")
+
+	if e != nil {
+		return nil, e
+	}
+	// w.l.Info("")
+	// w.l.Infof("Raw horizon response was %s\n", resp.Body)
+	// w.l.Info("")
+	defer resp.Body.Close()
+	byteResp, e := ioutil.ReadAll(resp.Body)
+	if e != nil {
+		return nil, e
+	}
+
+	json.Unmarshal([]byte(byteResp), &paths)
+	// if len(paths.Embedded.Records) > 0 {
+	// 	w.l.Info("")
+	// 	w.l.Infof("Unmarshalled into: %+v\n", paths.Embedded.Records[0])
+	// 	w.l.Info("")
+	// }
+
+	return &paths, nil
 }
