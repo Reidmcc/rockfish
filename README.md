@@ -10,7 +10,7 @@ All of which also adds up to rationalizing price discovery on the SDEX. Pretty g
 
 ### Using Rockfish
 
-Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walkthrough.md). Please note that Rockfish is in _**very**_ early alpha and there are almost certainly bugs to be discovered.
+Rockfish is in _**very**_ early alpha and under heavy development. I wouldn't recommend it for production yet.
 
 ### Installing Rockfish
 
