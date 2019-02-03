@@ -415,12 +415,6 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 
 	receiveAmount := amount.AsString()
 
-	// numFee := model.NumberFromFloat(baseFee, utils.SdexPrecision)
-	// maxPayAmount := amount.Subtract(*numFee).AsString()
-
-	// setting this high to see what the network would charge right after a apparently valid path came back
-	//testPad := model.NumberFromFloat(1.01, utils.SdexPrecision)
-
 	// use the literal horizon output for cost, yeesh
 	maxPayAmount := payPath.SourceAmount
 	numMax, e := model.NumberFromString(maxPayAmount, utils.SdexPrecision)
