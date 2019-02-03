@@ -95,13 +95,16 @@ func (a *Arbitrageur) Start() {
 }
 
 func (a *Arbitrageur) cycle() {
-	bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
+	// bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
+	bestPath, maxAmount, thresholdMet, e := a.PathFinder.AnalysePaths()
 	if e != nil {
 		a.l.Errorf("error while finding best path: %s", e)
 	}
 
 	if thresholdMet {
-		e := a.DexAgent.SendPaymentCycle(bestPath, maxAmount)
+		//e := a.DexAgent.SendPaymentCycle(bestPath, maxAmount)
+		holdAssetHack := &a.PathFinder.HoldAsset
+		e := a.DexAgent.SendByFoundPath(bestPath, holdAssetHack, maxAmount)
 		if e != nil {
 			a.l.Errorf("Error while sending payment cycle %s", e)
 		}
