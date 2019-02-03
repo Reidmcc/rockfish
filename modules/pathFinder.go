@@ -35,6 +35,7 @@ type PathFinder struct {
 
 	//unintialized
 	endAssetDisplay string
+	assetBookMark   int
 }
 
 type groupedAsset struct {
@@ -64,6 +65,8 @@ func MakePathFinder(
 
 	var pathList []PaymentPath
 	endAssetDisplay := holdAsset.Code
+	// assetBookMark ensures we don't get stuck on one asset
+	assetBookMark := 0
 
 	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
 		endAssetDisplay = "XLM"
@@ -75,7 +78,7 @@ func MakePathFinder(
 		for n := 0; n < len(assetBook); n++ {
 			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
 				path := makePaymentPath(assetBook[i].Asset, assetBook[n].Asset, holdAsset)
-				l.Infof("added path: %s -> %s -> %s -> %s", endAssetDisplay, assetBook[i].Asset.Code, assetBook[n].Asset.Code, endAssetDisplay)
+				//l.Infof("added path: %s -> %s -> %s -> %s", endAssetDisplay, assetBook[i].Asset.Code, assetBook[n].Asset.Code, endAssetDisplay)
 				pathList = append(pathList, path)
 			}
 		}
@@ -92,6 +95,7 @@ func MakePathFinder(
 		minAmount:       model.NumberFromFloat(stratConfig.MinAmount, utils.SdexPrecision),
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
+		assetBookMark:   assetBookMark,
 	}, nil
 }
 
@@ -262,11 +266,17 @@ func (p *PathFinder) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
 	metThreshold := false
 	var bestPath PathRecord
 	var bestCost *model.Number
-	var amount *model.Number
+	//var amount *model.Number
+	var pathOutput *model.Number
 
-	for _, b := range p.assetBook {
+	for i := p.assetBookMark; i < len(p.assetBook); i++ {
+		currentAsset := p.assetBook[i]
+		p.assetBookMark++
+		if p.assetBookMark >= len(p.assetBook) {
+			p.assetBookMark = 0
+		}
 		pair := TradingPair{
-			Base:  b.Asset,
+			Base:  currentAsset.Asset,
 			Quote: p.HoldAsset,
 		}
 
@@ -276,14 +286,15 @@ func (p *PathFinder) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
 		}
 
 		amountConversion := model.NumberConstants.One.Divide(*bidPrice)
-		minConvertedAmount := amountConversion.Multiply(*p.minAmount)
+		// if we want to keep useBalance we have to put a balance call here
+		minConvertedAmount := amountConversion.Multiply(*p.staticAmount)
 		p.l.Info("")
 		// p.l.Infof("Amount ratio calced at %v\n", amountConversion.AsFloat())
 		// p.l.Infof("Converted minAmount calced at %v\n", minConvertedAmount.AsFloat())
 		// p.l.Info("")
 
-		// now find paths where at least the min amount goes through
-		pathData, e := p.dexWatcher.GetPaths(b.Asset, minConvertedAmount)
+		// now find paths where the desired amount goes through
+		pathData, e := p.dexWatcher.GetPaths(currentAsset.Asset, minConvertedAmount)
 		if e != nil {
 			return nil, nil, false, fmt.Errorf("error while analysing paths %s", e)
 		}
@@ -291,7 +302,7 @@ func (p *PathFinder) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
 		var intermediatePaths []PathRecord
 
 		for _, s := range pathData.Embedded.Records {
-			//p.l.Infof("checking path %v+, with has a path struct of length %v", s, len(s.Path))
+			//p.l.Infof("checking path %v+, witch has a path struct of length %v", s, len(s.Path))
 			if len(s.Path) > 0 {
 				//p.l.Info("added the checked path to the candidate list")
 				intermediatePaths = append(intermediatePaths, s)
@@ -299,7 +310,7 @@ func (p *PathFinder) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
 		}
 
 		if len(intermediatePaths) == 0 {
-			p.l.Infof("No paths with intermediaries found for %s|%s", b.Asset.Code, b.Asset.Issuer)
+			p.l.Infof("No paths with intermediaries found for %s|%s", currentAsset.Asset.Code, currentAsset.Asset.Issuer)
 			continue
 		}
 
@@ -333,26 +344,30 @@ func (p *PathFinder) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
 		}
 		pathOutput := destAmount.Multiply(*bidPrice)
 		pathRatio := pathOutput.Divide(*bestCost)
-		p.l.Infof("Best path min amount output for %s|%s was %v for %v", b.Asset.Code, b.Asset.Issuer, pathOutput.AsFloat(), bestCost.AsFloat())
+		p.l.Infof("Best path amount output for %s|%s was %v for %v", currentAsset.Asset.Code, currentAsset.Asset.Issuer, pathOutput.AsFloat(), bestCost.AsFloat())
 		p.l.Infof("With a ratio if %v", pathRatio.AsFloat())
+		//p.l.Infof("Raw best cost was %v ; raw converted amount was was %v", bestCost.AsFloat(), minConvertedAmount.AsFloat())
 
-		if pathOutput.AsFloat()/p.minRatio.AsFloat() > bestCost.AsFloat() && len(bestPath.Path) > 0 {
+		if pathOutput.Scale(1.0/p.minRatio.AsFloat()).AsFloat() > bestCost.AsFloat() && len(bestPath.Path) > 0 {
 			metThreshold = true
 			p.l.Info("")
 			p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
 			p.l.Info("")
-			amount, e := p.findMaxAmount(bestPath)
+			// trying a method that doesn't analyst path throughput, just uses bestCost
+			// should be faster and more accurate
+			//amount, e := p.findMaxAmount(bestPath)
 			if e != nil {
 				return nil, nil, false, fmt.Errorf("error while analysing paths %s", e)
 			}
-			return &bestPath, amount, metThreshold, nil
+			return &bestPath, pathOutput, metThreshold, nil
 		}
 
 	}
-	return &bestPath, amount, false, nil
+	return &bestPath, pathOutput, false, nil
 }
 
 // findMaxAmount finds the amount for the AnalysePaths functions
+// this likely needs math edits due to bid amount inversion
 func (p *PathFinder) findMaxAmount(sendPath PathRecord) (*model.Number, error) {
 	var pathPairs []TradingPair
 	var pair TradingPair

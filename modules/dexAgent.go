@@ -417,7 +417,21 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 
 	// numFee := model.NumberFromFloat(baseFee, utils.SdexPrecision)
 	// maxPayAmount := amount.Subtract(*numFee).AsString()
-	maxPayAmount := amount.AsString()
+
+	// setting this high to see what the network would charge right after a apparently valid path came back
+	//testPad := model.NumberFromFloat(1.01, utils.SdexPrecision)
+
+	// use the literal horizon output for cost, yeesh
+	maxPayAmount := payPath.SourceAmount
+	numMax, e := model.NumberFromString(maxPayAmount, utils.SdexPrecision)
+	if e != nil {
+		return nil, fmt.Errorf("Error converting source amount string to model.number: %s", e)
+	}
+
+	// with a stop to make sure it's not over somehow
+	if numMax.AsFloat() > amount.AsFloat() {
+		maxPayAmount = amount.AsString()
+	}
 
 	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
 	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
@@ -431,6 +445,18 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 		convertAsset := PathAsset2BuildAsset(payPath.Path[i])
 		pw = pw.Through(convertAsset)
 	}
+
+	// if not calculating the full path you must add the asset set as the "destination" as a path asset
+	lastPathAsset := PathAsset{
+		AssetType:   payPath.DestinationAssetType,
+		AssetCode:   payPath.DestinationAssetCode,
+		AssetIssuer: payPath.DestinationAssetIssuer,
+	}
+
+	lastConvertAsset := PathAsset2BuildAsset(lastPathAsset)
+
+	pw = pw.Through(lastConvertAsset)
+	dA.l.Infof("Adding to payment path: %s|%s", lastPathAsset.AssetCode, lastPathAsset.AssetIssuer)
 
 	dA.l.Infof("Raw build.PayWith set to: %s", pw)
 
