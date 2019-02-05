@@ -64,13 +64,6 @@ func MakePathFinder(
 	}
 
 	var pathList []PaymentPath
-	endAssetDisplay := holdAsset.Code
-	// assetBookMark ensures we don't get stuck on one asset
-	assetBookMark := 0
-
-	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
-		endAssetDisplay = "XLM"
-	}
 
 	l.Info("generating path list: ")
 
@@ -83,6 +76,15 @@ func MakePathFinder(
 			}
 		}
 	}
+
+	endAssetDisplay := holdAsset.Code //this is just so XLM doesn't show up blank
+
+	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
+		endAssetDisplay = "XLM"
+	}
+
+	// assetBookMark ensures we don't get stuck on one asset
+	assetBookMark := 0
 
 	return &PathFinder{
 		dexWatcher:      dexWatcher,
@@ -242,16 +244,21 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	ratio = firstPairTopBidPrice.Multiply(*midPairTopBidPrice)
 	ratio = ratio.Multiply(*lastPairTopBidPrice)
 
-	// input is straightforward, set amount candidate to that
-	maxCycleAmount := firstPairTopBidAmount.Divide(*firstPairTopBidPrice)
+	// max input is just firstPairTopBidAmount
+	maxCycleAmount := firstPairTopBidAmount
 
 	// now get lower of AssetB amounts
-	maxBsell := lastPairTopBidAmount.Divide(*lastPairTopBidPrice)
-	maxBreceive := midPairTopBidAmount
+	// the most of AssetB you can get is the top bid of the mid pair*mid pair price
+	maxBreceive := midPairTopBidAmount.Multiply(*midPairTopBidPrice)
+
+	// max sell of asset B is just lastPairTopBidAmount
+	maxBsell := lastPairTopBidAmount
+
 	if maxBreceive.AsFloat() < maxBsell.AsFloat() {
 		maxBsell = maxBreceive
 	}
 
+	// maxLastReceive is maxBsell*last pair price
 	maxLastReceive := maxBsell.Multiply(*lastPairTopBidPrice)
 
 	if maxLastReceive.AsFloat() < maxCycleAmount.AsFloat() {
@@ -429,21 +436,19 @@ func (p *PathFinder) findMaxAmount(sendPath PathRecord) (*model.Number, error) {
 	}
 
 	p.l.Infof("generated bidSeries of %v+", bidSeries)
-	maxInput := bidSeries[0].Amount.Divide(*bidSeries[0].Price)
-	var throughput *model.Number
 
-	// this looks weird; you track how much you could push through each pair by just amounts, price doesn't actually matter
-	// then you convert price at the end
+	maxInput := bidSeries[0].Amount
+	inAmount := bidSeries[0].Amount.Multiply(*bidSeries[0].Price)
+
 	for i := 1; i < len(bidSeries); i++ {
-		stepPotential := bidSeries[i-1].Amount
-		maxSell := bidSeries[i].Amount
-		if maxSell.AsFloat() < stepPotential.AsFloat() {
-			stepPotential = maxSell
+		outAmount := bidSeries[i].Amount
+		if inAmount.AsFloat() < outAmount.AsFloat() {
+			outAmount = inAmount
 		}
-		throughput = stepPotential
+		inAmount = outAmount.Multiply(*bidSeries[i].Price)
 	}
 
-	maxOutput := throughput.Multiply(*bidSeries[len(bidSeries)-1].Price)
+	maxOutput := inAmount
 
 	if maxInput.AsFloat() < maxOutput.AsFloat() {
 		maxOutput = maxInput

@@ -95,16 +95,18 @@ func (a *Arbitrageur) Start() {
 }
 
 func (a *Arbitrageur) cycle() {
-	// bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
-	bestPath, maxAmount, thresholdMet, e := a.PathFinder.AnalysePaths()
+	bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
+	// or for the request-path method:
+	// bestPath, maxAmount, thresholdMet, e := a.PathFinder.AnalysePaths()
 	if e != nil {
 		a.l.Errorf("error while finding best path: %s", e)
 	}
 
 	if thresholdMet {
-		//e := a.DexAgent.SendPaymentCycle(bestPath, maxAmount)
-		holdAssetHack := &a.PathFinder.HoldAsset
-		e := a.DexAgent.SendByFoundPath(bestPath, holdAssetHack, maxAmount)
+		e := a.DexAgent.SendPaymentCycle(bestPath, maxAmount)
+		// or for the request-path method:
+		// holdAssetHack := &a.PathFinder.HoldAsset
+		// e := a.DexAgent.SendByFoundPath(bestPath, holdAssetHack, maxAmount)
 		if e != nil {
 			a.l.Errorf("Error while sending payment cycle %s", e)
 		}
@@ -113,18 +115,3 @@ func (a *Arbitrageur) cycle() {
 
 	return
 }
-
-/*
-What do I need?
-	payment path list
-	pairing function
-	price calculation function
-	pricefeeds
-	MultiDex to talk to the network
-
-	the auxillary Kelp bot stuff
-		timeController
-		threadTracker
-		fixedIterations somewhere
-		alert? not sure what that does
-*/

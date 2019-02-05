@@ -62,6 +62,10 @@ func (w *DexWatcher) GetTopBid(pair TradingPair) (*model.Number, *model.Number, 
 		return nil, nil, fmt.Errorf("Error converting to model.Number: %s", e)
 	}
 
+	// now invert the bid amount because the network sends it upside down
+	floatPrice := topBidPrice.AsFloat()
+	topBidAmount = topBidAmount.Scale(1 / floatPrice)
+
 	//w.l.Infof("topBidPrice for pair Base = %s Quote =%s was %v", pair.Base.Code, pair.Quote.Code, topBidPrice)
 
 	return topBidPrice, topBidAmount, nil
