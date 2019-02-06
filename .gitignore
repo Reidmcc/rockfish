@@ -13,4 +13,6 @@
 
 # Binary directory
 bin/
-bin/rockfish
+
+# json
+*.json
