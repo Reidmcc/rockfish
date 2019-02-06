@@ -14,27 +14,33 @@ var buildDate string
 var gitBranch string
 var gitHash string
 
-const rootShort = "Kelp is a free and open-source trading bot for the Stellar universal marketplace."
-const rootLong = `Kelp is a free and open-source trading bot for the Stellar universal marketplace (https://stellar.org).
+const rootShort = "Rockfish is an open-source arbitrage bot for the Stellar universal marketplace."
+const rootLong = `Rockfish is an open-source arbitrage bot for the Stellar universal marketplace (https://stellar.org).
 
 Learn more about Stellar : https://www.stellar.org
+Learn more about Rockfish: https://github.com/Reidmcc/rockfish
 Learn more about Kelp    : https://github.com/interstellar/kelp`
-const kelpExamples = tradeExamples + "\n  kelp trade --help"
+const examples = arbitExamples
 
 // RootCmd is the main command for this repo
 var RootCmd = &cobra.Command{
-	Use:     "kelp",
+	Use:     "rockfish",
 	Short:   rootShort,
 	Long:    rootLong,
-	Example: kelpExamples,
+	Example: examples,
 	Run: func(ccmd *cobra.Command, args []string) {
 		intro := `
-  __        _______ _     ____ ___  __  __ _____    _____ ___      _  _______ _     ____  
-  \ \      / / ____| |   / ___/ _ \|  \/  | ____|  |_   _/ _ \    | |/ / ____| |   |  _ \ 
-   \ \ /\ / /|  _| | |  | |  | | | | |\/| |  _|      | || | | |   | ' /|  _| | |   | |_) |
-    \ V  V / | |___| |__| |__| |_| | |  | | |___     | || |_| |   | . \| |___| |___|  __/ 
-     \_/\_/  |_____|_____\____\___/|_|  |_|_____|    |_| \___/    |_|\_\_____|_____|_|    
-                                                                            ` + version + `
+		_______  _______  _______  _        _______ _________ _______          
+		(  ____ )(  ___  )(  ____ \| \    /\(  ____ \\__   __/(  ____ \|\     /|
+		| (    )|| (   ) || (    \/|  \  / /| (    \/   ) (   | (    \/| )   ( |
+		| (____)|| |   | || |      |  (_/ / | (__       | |   | (_____ | (___) |
+		|     __)| |   | || |      |   _ (  |  __)      | |   (_____  )|  ___  |
+		| (\ (   | |   | || |      |  ( \ \ | (         | |         ) || (   ) |
+		| ) \ \__| (___) || (____/\|  /  \ \| )      ___) (___/\____) || )   ( |
+		|/   \__/(_______)(_______/|_/    \/|/       \_______/\_______)|/     \|
+										` + version + `	
+					THANKS, KELP!
+
 `
 		fmt.Println(intro)
 		e := ccmd.Help()
