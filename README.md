@@ -14,7 +14,7 @@ Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walk
 
 ### Installing Rockfish
 
-Rockfish does not yet have a binary release, so you compile from source. You can compile on Linux or Windows. Terminal commands in these instructions are mostly for Linux.
+Either grab one of the releases, or you can compile from source, see below. Terminal commands in these instructions are mostly for Linux.
 
 1. Clone this repository
 2. Install the [Go programming language](https://golang.org/)
