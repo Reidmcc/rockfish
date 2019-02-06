@@ -13,3 +13,6 @@
 
 # Binary directory
 bin/
+
+# json
+*.json
