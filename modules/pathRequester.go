@@ -93,6 +93,8 @@ func (p *PathRequester) AnalysePaths() (*PathRecord, *model.Number, bool, error)
 			return nil, nil, false, fmt.Errorf("Error while analysing paths %s", e)
 		}
 
+		// if price is 50 and we want 100, we have to sell 2, so yeah, divide
+
 		amountConversion := model.NumberConstants.One.Divide(*bidPrice)
 		// if we want to keep useBalance we have to put a balance call here
 		minConvertedAmount := amountConversion.Multiply(*p.staticAmount)

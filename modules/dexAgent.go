@@ -162,7 +162,7 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		return errors.Wrap(e, "SubmitOps error: ")
 	}
 
-	dA.l.Infof("Pre-XDR raw was: %s", tx)
+	dA.l.Infof("pre-XDR raw was: %s", tx)
 	// convert to xdr string
 	txeB64, e := dA.sign(tx)
 	if e != nil {
@@ -242,99 +242,64 @@ func (dA *DexAgent) minReserve(subentries int32) float64 {
 
 // SendPaymentCycle executes a payment cycle
 func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number) error {
+
+	payOp, e := dA.makePathPayment(path, maxAmount)
+	if e != nil {
+		return fmt.Errorf("error submitting path payment op: %s", e)
+	}
+
+	var opList []build.TransactionMutator
+	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
+	opList = append(opList, payOp)
+
+	e = dA.SubmitOps(opList, nil)
+	if e != nil {
+		return fmt.Errorf("error submitting path payment op: %s", e)
+	}
+
+	return nil
+}
+
+// makePathPayment constructs and returns a path payment transaction for a given path object
+func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) (*build.PaymentBuilder, error) {
+	cycleAmount := maxAmount
+
 	if dA.useBalance {
-		e := dA.payWithBalance(path, maxAmount)
+		balance, e := dA.JustAssetBalance(path.HoldAsset)
 		if e != nil {
-			return fmt.Errorf("error while preparing to send payment cycle %s", e)
+			return nil, fmt.Errorf("error getting account hold asset balance %s", e)
 		}
-		return nil
+		if balance < maxAmount.AsFloat() {
+			cycleAmount = model.NumberFromFloat(balance, utils.SdexPrecision)
+		}
 	}
 
-	e := dA.payWithAmount(path, maxAmount)
-	if e != nil {
-		return fmt.Errorf("error while preparing to send payment cycle %s", e)
-	}
-	return nil
-}
-
-func (dA *DexAgent) payWithBalance(path *PaymentPath, maxAmount *model.Number) error {
-	balance, e := dA.JustAssetBalance(path.HoldAsset)
-	if e != nil {
-		return fmt.Errorf("error getting account hold asset balance %s", e)
-	}
-	payAmount := model.NumberFromFloat(balance, utils.SdexPrecision)
-	dA.l.Infof("balance return to payWithBalance received amount of: %v", payAmount)
-	if maxAmount.AsFloat() < payAmount.AsFloat() {
-		payAmount = maxAmount
-	}
-	dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
-	payOp, e := dA.MakePathPayment(path, payAmount, dA.minRatio)
-	if e != nil {
-		return fmt.Errorf("Error submitting path payment op: %s", e)
-	}
-	var opList []build.TransactionMutator
-	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
-	opList = append(opList, payOp)
-
-	e = dA.SubmitOps(opList, nil)
-	if e != nil {
-		return fmt.Errorf("Error while submitting path payment op: %s", e)
+	if !dA.useBalance {
+		if dA.baseAmount.AsFloat() < maxAmount.AsFloat() {
+			cycleAmount = dA.baseAmount
+		}
 	}
 
-	return nil
-}
-
-func (dA *DexAgent) payWithAmount(path *PaymentPath, maxAmount *model.Number) error {
-	payAmount := dA.baseAmount
-	// dA.l.Infof("payWithAmount received amount of: %v", payAmount)
-	// dA.l.Infof("dA.baseAmount value checked against was: %v", dA.baseAmount)
-	if maxAmount.AsFloat() < payAmount.AsFloat() {
-		payAmount = maxAmount
-	}
-	// dA.l.Infof("after checking for lower maxAmount, payAmount set to: %v", payAmount)
-	payOp, e := dA.MakePathPayment(path, payAmount, dA.minRatio)
-	if e != nil {
-		return fmt.Errorf("Error submitting path payment op: %s", e)
+	// if cycleAmount is still maxAmount, reduce it to allow for stellar core price rounding
+	// if the price gets rounded against us the payment will slip to the next offer and end up over source max
+	// core should round by no more than 1%
+	if cycleAmount.AsFloat() >= maxAmount.AsFloat() {
+		cycleAmount = maxAmount.Scale(0.98)
 	}
 
-	var opList []build.TransactionMutator
-	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
-	opList = append(opList, payOp)
-
-	e = dA.SubmitOps(opList, nil)
-	if e != nil {
-		return fmt.Errorf("Error submitting path payment op: %s", e)
-	}
-
-	return nil
-}
-
-// MakePathPayment constructs and returns a path payment transaction for a given path object
-func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, minRatio *model.Number) (build.PaymentBuilder, error) {
 	holdAsset, throughAssetA, throughAssetB := Path2Assets(path)
-	receiveAmount := amount.AsString()
 
-	numFee := model.NumberFromFloat(baseFee, utils.SdexPrecision)
-	maxPayAmount := amount.Subtract(*numFee).AsString()
+	receiveAmount := cycleAmount.AsString()
+	// currently set these to equal to allow max successes to diagnose over-max problem
+	maxPayAmount := cycleAmount.AsString()
 
 	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
 	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
-
-	//SDEX transactions always displays full max but doesn't charge that much if real rates lower
-	// dA.l.Infof("Set receiveAmount to: %s", receiveAmount)
-	// dA.l.Infof("Set maxPayAmount to: %s", maxPayAmount)
 
 	//pre-converting before building in case doing the conversion inside the build.Paywith or pw.Through is screwing stuff up
 	convertHoldAsset := utils.Asset2Asset(holdAsset)
 	convertAssetA := utils.Asset2Asset(throughAssetA)
 	convertAssetB := utils.Asset2Asset(throughAssetB)
-
-	// dA.l.Info("")
-	// dA.l.Info("After conversion to build.Asset format assets were:")
-	// dA.l.Infof("Hold Asset: %s|%s", convertHoldAsset.Code, convertHoldAsset.Issuer)
-	// dA.l.Infof("AssetA: %s|%s", convertAssetA.Code, convertAssetA.Issuer)
-	// dA.l.Infof("AssetA: %s|%s", convertAssetB.Code, convertAssetB.Issuer)
-	// dA.l.Info("")
 
 	pw := build.PayWith(convertHoldAsset, maxPayAmount)
 	// dA.l.Infof("Initial PayWith set to: %s", pw)
@@ -343,12 +308,11 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 	pw = pw.Through(convertAssetB)
 	// dA.l.Infof("With second Through is: %s", pw)
 
-	dA.l.Infof("Raw build.PayWith set to: %s", pw)
+	dA.l.Infof("raw build.PayWith set to: %s", pw)
 
 	// dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
 	if convertHoldAsset == build.NativeAsset() {
-		// dA.l.Info("Triggered holdAsset is NativeAsset check")
 
 		payOp := build.Payment(
 			build.Destination{AddressOrSeed: dA.TradingAccount},
@@ -356,12 +320,9 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 			pw,
 		)
 
-		//payOp.Mutate(build.PayWithPath{pw})
-
-		return payOp, nil
+		return &payOp, nil
 	}
 
-	// dA.l.Info("Building as creditAmount")
 	payOp := build.Payment(
 		build.Destination{AddressOrSeed: dA.TradingAccount},
 		build.CreditAmount{
@@ -372,7 +333,7 @@ func (dA *DexAgent) MakePathPayment(path *PaymentPath, amount *model.Number, min
 		pw,
 	)
 
-	return payOp, nil
+	return &payOp, nil
 
 }
 
@@ -381,7 +342,7 @@ func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, 
 
 	payOp, e := dA.makePathPaymentredux(path, holdAsset, maxAmount)
 	if e != nil {
-		return fmt.Errorf("Error trying to send via found path")
+		return fmt.Errorf("error trying to send via found path")
 	}
 
 	var opList []build.TransactionMutator
@@ -390,7 +351,7 @@ func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, 
 
 	e = dA.SubmitOps(opList, nil)
 	if e != nil {
-		return fmt.Errorf("Error submitting path payment op: %s", e)
+		return fmt.Errorf("error submitting path payment op: %s", e)
 	}
 
 	return nil
@@ -404,7 +365,7 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 		balance, e := dA.JustAssetBalance(*holdAsset)
 		numBalanace := model.NumberFromFloat(balance, utils.SdexPrecision)
 		if e != nil {
-			return nil, fmt.Errorf("Error creating path payment op: %s", e)
+			return nil, fmt.Errorf("error creating path payment op: %s", e)
 		}
 
 		if numBalanace.AsFloat() < amount.AsFloat() {
@@ -419,7 +380,7 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 	maxPayAmount := payPath.SourceAmount
 	numMax, e := model.NumberFromString(maxPayAmount, utils.SdexPrecision)
 	if e != nil {
-		return nil, fmt.Errorf("Error converting source amount string to model.number: %s", e)
+		return nil, fmt.Errorf("error converting source amount string to model.number: %s", e)
 	}
 
 	// with a stop to make sure it's not over somehow
@@ -450,9 +411,9 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 	lastConvertAsset := PathAsset2BuildAsset(lastPathAsset)
 
 	pw = pw.Through(lastConvertAsset)
-	dA.l.Infof("Adding to payment path: %s|%s", lastPathAsset.AssetCode, lastPathAsset.AssetIssuer)
+	dA.l.Infof("adding to payment path: %s|%s", lastPathAsset.AssetCode, lastPathAsset.AssetIssuer)
 
-	dA.l.Infof("Raw build.PayWith set to: %s", pw)
+	dA.l.Infof("raw build.PayWith set to: %s", pw)
 
 	if convertHoldAsset == build.NativeAsset() {
 
