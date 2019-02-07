@@ -162,7 +162,6 @@ func init() {
 		dexWatcher := modules.MakeDexWatcher(
 			client,
 			utils.ParseNetwork(arbitConfig.HorizonURL),
-			arbitConfig.SourceAccount(),
 			arbitConfig.TradingAccount(),
 			l)
 
