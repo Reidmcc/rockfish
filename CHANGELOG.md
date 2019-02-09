@@ -27,3 +27,5 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## v 0.1.0-alpha
 ### Added
 - Core Rockfish functionality: watch orderbooks, find opportunities, and make cyclical path payments
+
+![rockfish icon long flip](https://user-images.githubusercontent.com/43561569/52517024-0c518c00-2bfa-11e9-9cd0-e2443d7868f1.png)
