@@ -1,4 +1,5 @@
-# Rockfish
+![rockfish banner](https://user-images.githubusercontent.com/43561569/52517026-2be8b480-2bfa-11e9-9f95-4379a7010ad1.png)
+
 
 Rockfish is an arbitrage bot for the Stellar Decentralized Exchange (SDEX). The SDEX is native to [Stellar's](https://www.stellar.org/) blockchain, and you can interact with it through third-party frontends, such as [Stellar X](https://www.stellarx.com/) and [Stellarport](https://stellarport.io/home).
 
