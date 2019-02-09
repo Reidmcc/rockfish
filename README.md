@@ -1,4 +1,5 @@
-# Rockfish
+![rockfish banner](https://user-images.githubusercontent.com/43561569/52517026-2be8b480-2bfa-11e9-9f95-4379a7010ad1.png)
+
 
 Rockfish is an arbitrage bot for the Stellar Decentralized Exchange (SDEX). The SDEX is native to [Stellar's](https://www.stellar.org/) blockchain, and you can interact with it through third-party frontends, such as [Stellar X](https://www.stellarx.com/) and [Stellarport](https://stellarport.io/home).
 
@@ -10,7 +11,7 @@ All of which also adds up to rationalizing price discovery on the SDEX. Pretty g
 
 ### Using Rockfish
 
-Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walkthrough.md). Please note Rockfish is in _**very**_ early alpha and under heavy development; proceed with care.
+Check out the [walkthrough](https://github.com/Reidmcc/rockfish/blob/master/walkthrough.md). Please note Rockfish is in alpha; proceed with care.
 
 ### Installing Rockfish
 
@@ -23,9 +24,11 @@ Either grab one of the releases, or you can compile from source, see below. Term
 5. Run Rockfish's `build.sh` from the main Rockfish repo directory `./scripts/build.sh`
 6. You should now have a `bin` folder in your repository with an executable: `rockfish`
 
-### Acknowledgments
+#### Acknowledgments
 
-Rockfish is largely built from [Kelp](https://github.com/interstellar/kelp) components and would not be possible without them. Real rockfish live in [kelp forests](https://en.wikipedia.org/wiki/Kelp_forest); hence the name.
+Rockfish uses many [Kelp](https://github.com/interstellar/kelp) components and would not be possible without them. Real rockfish live in [kelp forests](https://en.wikipedia.org/wiki/Kelp_forest); hence the name.
+
+Logo image based on: _[Tiger Rockfish](https://commons.wikimedia.org/wiki/File:Tiger_rockfish_Joseph_R._Tomelleri.JPG). Joseph R. Tomelleri,  NOAA Professional Paper NMFS 18-Fishes of the Salish Sea: a compilation and distributional analysis. National Marine Fisheries Service (September 2015). doi:10.7755/PP.18_
 
 #### Disclaimer
 
