@@ -18,7 +18,6 @@ import (
 type DexWatcher struct {
 	API            *horizon.Client
 	Network        build.Network
-	SourceAccount  string
 	TradingAccount string
 	l              logger.Logger
 }
@@ -27,13 +26,11 @@ type DexWatcher struct {
 func MakeDexWatcher(
 	api *horizon.Client,
 	network build.Network,
-	sourceAccount string,
 	tradingAccount string,
 	l logger.Logger) *DexWatcher {
 	return &DexWatcher{
 		API:            api,
 		Network:        network,
-		SourceAccount:  sourceAccount,
 		TradingAccount: tradingAccount,
 		l:              l,
 	}
