@@ -1,5 +1,5 @@
-hash: 68441c1c2d7d538a01f7397917246b5068f1268989dc092b4ab5f65394a44d12
-updated: 2019-01-20T19:02:25.756258409-06:00
+hash: a8ebb393f7a7f7302be3dbb69525c220ddc180100516016b69aa0de9d80c3664
+updated: 2019-02-10T11:08:20.290274398-06:00
 imports:
 - name: cloud.google.com/go
   version: 105f0564f8d67e66e7ea5ecc5a6e46dad440aa09
@@ -25,10 +25,6 @@ imports:
   version: 347cf4a86c1cb8d262994d8ef5924d4576c5b331
   subpackages:
   - proto
-- name: github.com/google/go-querystring
-  version: 44c6ddd0a2342c386950e880b658017258da92fc
-  subpackages:
-  - query
 - name: github.com/inconshreveable/mousetrap
   version: 76626ae9c91c4f2a10f34cad8ce83ea42c93bb75
 - name: github.com/interstellar/kelp
@@ -64,8 +60,6 @@ imports:
   version: a875e7c9fa2388ce03279f6b5ba1c2ccd1f9e917
   subpackages:
   - xdr3
-- name: github.com/PagerDuty/go-pagerduty
-  version: 635c5ce271490fba94880e62cde4eea3c1c184b9
 - name: github.com/pkg/errors
   version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: github.com/pmezard/go-difflib
@@ -104,6 +98,8 @@ imports:
   - support/render/problem
   - support/url
   - xdr
+- name: github.com/stellar/kelp
+  version: 9e6137e2b156e382e1a3ac977262f284800eed14
 - name: github.com/stretchr/objx
   version: cbeaeb16a013161a98496fad62933b1d21786672
 - name: github.com/stretchr/testify
