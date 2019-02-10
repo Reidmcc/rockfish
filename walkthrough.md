@@ -103,3 +103,5 @@ Other optional flags are available:
 When Rockfish attempts a cycle, Stellar will often return `[op_over_source_max]`, which means that the cost of the payment cycle is more than what Rockfish specified (i.e., you would lose money). This is a valid response and does not indicate a bug. The intended meaning is that the offers upon which the path was based have been taken or cancelled. Currently this is the most common response to Rockfish cycle attempts, and it is unclear whether the paths really are being removed that quickly or whether the network is determining path cost by a method that does not match Rockfish's price ratio methodology, see issue [2](https://github.com/Reidmcc/rockfish/issues/2). 
 
 Note that no losing cycle will go through; either it succeeds and your balance increases or it bounces. You do pay the 0.00001 lumen network fee for a bounced transaction, but that is trivial if you're ever succeeding.
+
+![rockfish icon long flip](https://user-images.githubusercontent.com/43561569/52517024-0c518c00-2bfa-11e9-9cd0-e2443d7868f1.png)
