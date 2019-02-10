@@ -14,5 +14,8 @@
 # Binary directory
 bin/
 
+# Vendor directory
+vendor/
+
 # json
 *.json
