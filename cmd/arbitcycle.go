@@ -11,14 +11,14 @@ import (
 
 	"github.com/Reidmcc/rockfish/arbitrageur"
 	"github.com/Reidmcc/rockfish/modules"
-	"github.com/interstellar/kelp/plugins"
-	"github.com/interstellar/kelp/support/logger"
-	"github.com/interstellar/kelp/support/utils"
 	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/stellar/go/clients/horizon"
 	"github.com/stellar/go/support/config"
+	"github.com/stellar/kelp/plugins"
+	"github.com/stellar/kelp/support/logger"
+	"github.com/stellar/kelp/support/utils"
 )
 
 const arbitExamples = `  rockfish arbitcycle --botConf ./path/botconfig.cfg --stratConf ./path/arbitcycle.cfg`

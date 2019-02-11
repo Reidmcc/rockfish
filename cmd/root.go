@@ -19,7 +19,7 @@ const rootLong = `Rockfish is an open-source arbitrage bot for the Stellar unive
 
 Learn more about Stellar : https://www.stellar.org
 Learn more about Rockfish: https://github.com/Reidmcc/rockfish
-Learn more about Kelp    : https://github.com/interstellar/kelp`
+Learn more about Kelp    : https://github.com/stellar/kelp`
 const examples = arbitExamples
 
 // RootCmd is the main command for this repo

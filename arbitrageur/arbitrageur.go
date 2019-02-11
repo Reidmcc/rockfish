@@ -4,11 +4,11 @@ import (
 	"time"
 
 	"github.com/Reidmcc/rockfish/modules"
-	"github.com/interstellar/kelp/api"
-	"github.com/interstellar/kelp/support/logger"
-	"github.com/interstellar/kelp/support/utils"
 	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/stellar/go/build"
+	"github.com/stellar/kelp/api"
+	"github.com/stellar/kelp/support/logger"
+	"github.com/stellar/kelp/support/utils"
 )
 
 // Arbitrageur is the bot struct

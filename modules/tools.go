@@ -1,9 +1,9 @@
 package modules
 
 import (
-	"github.com/interstellar/kelp/support/utils"
 	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
+	"github.com/stellar/kelp/support/utils"
 )
 
 // Path2Assets returns the assets inside a PaymentPath
