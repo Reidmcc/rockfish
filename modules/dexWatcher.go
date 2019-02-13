@@ -1,15 +1,24 @@
 package modules
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
+	"github.com/manucorporat/sse"
+	"github.com/nikhilsaraf/go-tools/multithreading"
+	"github.com/pkg/errors"
 	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
 )
@@ -19,6 +28,7 @@ type DexWatcher struct {
 	API            *horizon.Client
 	Network        build.Network
 	TradingAccount string
+	BookTracker    *multithreading.ThreadTracker
 	l              logger.Logger
 }
 
@@ -28,10 +38,14 @@ func MakeDexWatcher(
 	network build.Network,
 	tradingAccount string,
 	l logger.Logger) *DexWatcher {
+
+	bookTracker := multithreading.MakeThreadTracker()
+
 	return &DexWatcher{
 		API:            api,
 		Network:        network,
 		TradingAccount: tradingAccount,
+		BookTracker:    bookTracker,
 		l:              l,
 	}
 }
@@ -145,4 +159,144 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number) (*Fi
 	// }
 
 	return &paths, nil
+}
+
+// AddTrackedBook adds a pair's orderbook to the BookTracker
+func (w *DexWatcher) AddTrackedBook(pair TradingPair) error {
+	query := url.Values{}
+
+	query.Add("selling_asset_type", pair.Base.Type)
+	query.Add("selling_asset_code", pair.Base.Code)
+	query.Add("selling_asset_issuer", pair.Base.Issuer)
+
+	query.Add("buying_asset_type", pair.Quote.Type)
+	query.Add("buying_asset_code", pair.Quote.Code)
+	query.Add("buying_asset_issuer", pair.Quote.Issuer)
+
+	bookURL := query.Encode()
+
+	// w.BookTracker.TriggerGoroutine(w.stream(context.Background(), bookURL, nil, w.handleReturnedBook))
+
+	w.BookTracker.TriggerGoroutine(func(inputs []interface{}) {
+		w.stream(context.Background(), bookURL, nil, w.handleReturnedBook)
+	}, []interface{}{context.Background(), bookURL, nil, w.handleReturnedBook})
+
+	return nil
+}
+
+func (w *DexWatcher) handleReturnedBook(data []byte) error {
+	var book *horizon.OrderBookSummary
+	json.Unmarshal([]byte(data), &book)
+
+	//do whatever needs doing to trigger actions on receiving orderbook updates
+
+	return nil
+}
+
+// this is the stream function from horizon.client, but horizon doesn't expose it
+func (w *DexWatcher) stream(
+	ctx context.Context,
+	baseURL string,
+	cursor *horizon.Cursor,
+	handler func(data []byte) error,
+) error {
+	query := url.Values{}
+	if cursor != nil {
+		query.Set("cursor", string(*cursor))
+	}
+
+	client := http.Client{}
+
+	for {
+		req, err := http.NewRequest("GET", fmt.Sprintf("%s?%s", baseURL, query.Encode()), nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "text/event-stream")
+
+		// Make sure we don't use c.HTTP that can have Timeout set.
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		reader := bufio.NewReader(resp.Body)
+
+		// Read events one by one. Break this loop when there is no more data to be
+		// read from resp.Body (io.EOF).
+	Events:
+		for {
+			// Read until empty line = event delimiter. The perfect solution would be to read
+			// as many bytes as possible and forward them to sse.Decode. However this
+			// requires much more complicated code.
+			// We could also write our own `sse` package that works fine with streams directly
+			// (github.com/manucorporat/sse is just using io/ioutils.ReadAll).
+			var buffer bytes.Buffer
+			nonEmptylinesRead := 0
+			for {
+				// Check if ctx is not cancelled
+				select {
+				case <-ctx.Done():
+					return nil
+				default:
+					// Continue
+				}
+
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					if err == io.EOF {
+						// Currently Horizon appends a new line after the last event so this is not really
+						// needed. We have this code here in case this behaviour is changed in a future.
+						// From spec:
+						// > Once the end of the file is reached, the user agent must dispatch the
+						// > event one final time, as defined below.
+						if nonEmptylinesRead == 0 {
+							break Events
+						}
+					} else {
+						return err
+					}
+				}
+
+				buffer.WriteString(line)
+
+				if strings.TrimRight(line, "\n\r") == "" {
+					break
+				}
+
+				nonEmptylinesRead++
+			}
+
+			events, err := sse.Decode(strings.NewReader(buffer.String()))
+			if err != nil {
+				return err
+			}
+
+			// Right now len(events) should always be 1. This loop will be helpful after writing
+			// new SSE decoder that can handle io.Reader without using ioutils.ReadAll().
+			for _, event := range events {
+				if event.Event != "message" {
+					continue
+				}
+
+				// Update cursor with event ID
+				if event.Id != "" {
+					query.Set("cursor", event.Id)
+				}
+
+				switch data := event.Data.(type) {
+				case string:
+					err = handler([]byte(data))
+				case []byte:
+					err = handler(data)
+				default:
+					err = errors.New("Invalid event.Data type")
+				}
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
 }
