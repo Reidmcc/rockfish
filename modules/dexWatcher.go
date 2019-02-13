@@ -179,7 +179,7 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair) error {
 
 	w.BookTracker.TriggerGoroutine(func(inputs []interface{}) {
 		w.stream(context.Background(), bookURL, nil, w.handleReturnedBook)
-	}, []interface{}{context.Background(), bookURL, nil, w.handleReturnedBook})
+	}, []interface{}{})
 
 	return nil
 }

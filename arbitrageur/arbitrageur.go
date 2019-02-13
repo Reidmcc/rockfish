@@ -20,6 +20,7 @@ type Arbitrageur struct {
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
+	BookTracker     *multithreading.ThreadTracker
 	l               logger.Logger
 
 	// uninitialized
@@ -39,11 +40,27 @@ func MakeArbitrageur(
 ) *Arbitrageur {
 
 	endAssetDisplay := pathFinder.HoldAsset.Code
+	var pairBook []modules.TradingPair
+
+	assetBook := pathFinder.AssetBook
+
+	for i := 0; i < len(assetBook); i++ {
+		for n := 0; n < len(assetBook); n++ {
+			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
+				pairBook = append(pairBook, modules.TradingPair{assetBook[i].Asset, assetBook[n].Asset})
+			}
+		}
+	}
+
+	encountered := map[string]bool{}
+
 	if utils.Asset2Asset(pathFinder.HoldAsset) == build.NativeAsset() {
 		endAssetDisplay = "XLM"
 
 	}
-	return &Arbitrageur{
+	bookTracker := multithreading.MakeThreadTracker()
+
+	a := Arbitrageur{
 		PathFinder:      pathFinder,
 		DexWatcher:      dexWatcher,
 		DexAgent:        dexAgent,
@@ -54,6 +71,19 @@ func MakeArbitrageur(
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
 	}
+
+	return &a
+	// return &Arbitrageur{
+	// 	PathFinder:      pathFinder,
+	// 	DexWatcher:      dexWatcher,
+	// 	DexAgent:        dexAgent,
+	// 	timeController:  timeController,
+	// 	threadTracker:   threadTracker,
+	// 	fixedIterations: fixedIterations,
+	// 	simMode:         simMode,
+	// 	l:               l,
+	// 	endAssetDisplay: endAssetDisplay,
+	// }
 }
 
 // Start ...starts

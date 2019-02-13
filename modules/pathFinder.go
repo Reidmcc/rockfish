@@ -25,8 +25,8 @@ type ArbitCycleConfig struct {
 type PathFinder struct {
 	dexWatcher   DexWatcher
 	HoldAsset    horizon.Asset
-	assetBook    []groupedAsset
-	pathList     []PaymentPath
+	AssetBook    []groupedAsset
+	PathList     []PaymentPath
 	minRatio     *model.Number
 	useBalance   bool
 	staticAmount *model.Number
@@ -89,8 +89,8 @@ func MakePathFinder(
 	return &PathFinder{
 		dexWatcher:      dexWatcher,
 		HoldAsset:       holdAsset,
-		assetBook:       assetBook,
-		pathList:        pathList,
+		AssetBook:       assetBook,
+		PathList:        pathList,
 		minRatio:        model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
 		useBalance:      stratConfig.UseBalance,
 		staticAmount:    model.NumberFromFloat(stratConfig.StaticAmount, utils.SdexPrecision),
@@ -166,10 +166,10 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 	metThreshold := false
 	var bestPath PaymentPath
 
-	for i := p.assetBookMark; i < len(p.pathList); i++ {
-		currentPath := p.pathList[i]
+	for i := p.assetBookMark; i < len(p.PathList); i++ {
+		currentPath := p.PathList[i]
 		p.assetBookMark++
-		if p.assetBookMark >= len(p.pathList) {
+		if p.assetBookMark >= len(p.PathList) {
 			p.assetBookMark = 0
 		}
 
