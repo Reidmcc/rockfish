@@ -46,17 +46,13 @@ How often you want Rockfish to check for trade oppotunities, in seconds:
 
 -----------------
 
-The URL for the Stellar Horizon API that Rockfish will query. The below is a Horizon server for the Stellar test network. The Stellar foundation's live Horizon server is at `"https://horizon.stellar.org/"`, though anyone (including you!) can run a Horizon instance.
+The URL for the Stellar Horizon API that Rockfish will query. The Stellar foundation's live Horizon server is at `"https://horizon.stellar.org/"`, though anyone (including you!) can run a Horizon instance. The below is a Horizon server for the Stellar test network. 
 
 `HORIZON_URL="https://horizon-testnet.stellar.org"`
-
------------------
 
 #### Arbitcycle
 
 The actual settings for Rockfish:
-
------------------
 
 The hold asset; this is what you need in Rockfish's trading account. For any asset that is not XLM you will also need the token issuer's account address, which you can find on any of the web front-ends for the SDEX, or on the [stellar.expert](https://stellar.expert) block explorer:
 
@@ -95,8 +91,6 @@ CODE = "COUPON"
 ISSUER = "GSIGH..."  
 GROUP = 1
 ````
-
------------------
 
 ### Run Rockfish
 
