@@ -9,6 +9,7 @@ import (
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/stellar/go/build"
+	"github.com/stellar/go/clients/horizon"
 )
 
 // Arbitrageur is the bot struct
@@ -20,7 +21,7 @@ type Arbitrageur struct {
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
-	BookTracker     *multithreading.ThreadTracker
+	BookUpdates     <-chan horizon.OrderBookSummary
 	l               logger.Logger
 
 	// uninitialized

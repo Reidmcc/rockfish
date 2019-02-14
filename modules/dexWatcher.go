@@ -28,7 +28,7 @@ type DexWatcher struct {
 	API            *horizon.Client
 	Network        build.Network
 	TradingAccount string
-	BookTracker    *multithreading.ThreadTracker
+	threadTracker  *multithreading.ThreadTracker
 	l              logger.Logger
 }
 
@@ -39,13 +39,13 @@ func MakeDexWatcher(
 	tradingAccount string,
 	l logger.Logger) *DexWatcher {
 
-	bookTracker := multithreading.MakeThreadTracker()
+	threadTracker := multithreading.MakeThreadTracker()
 
 	return &DexWatcher{
 		API:            api,
 		Network:        network,
 		TradingAccount: tradingAccount,
-		BookTracker:    bookTracker,
+		threadTracker:  threadTracker,
 		l:              l,
 	}
 }
@@ -177,9 +177,9 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair) error {
 
 	// w.BookTracker.TriggerGoroutine(w.stream(context.Background(), bookURL, nil, w.handleReturnedBook))
 
-	w.BookTracker.TriggerGoroutine(func(inputs []interface{}) {
+	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
 		w.stream(context.Background(), bookURL, nil, w.handleReturnedBook)
-	}, []interface{}{})
+	}, nil)
 
 	return nil
 }
@@ -188,7 +188,7 @@ func (w *DexWatcher) handleReturnedBook(data []byte) error {
 	var book *horizon.OrderBookSummary
 	json.Unmarshal([]byte(data), &book)
 
-	//do whatever needs doing to trigger actions on receiving orderbook updates
+	BookUpdates <- book
 
 	return nil
 }
