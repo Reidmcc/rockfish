@@ -20,7 +20,7 @@ Either grab one of the releases, or you can compile from source, see below. Term
 1. Clone this repository
 2. Install the [Go programming language](https://golang.org/)
 3. Install [Glide](https://github.com/Masterminds/glide) `curl https://glide.sh/get | sh`
-4. Run `glide install` and `glide up` (for Windows too)
+4. Run `glide install` (for Windows too)
 5. Run Rockfish's `build.sh` from the main Rockfish repo directory `./scripts/build.sh`
 6. You should now have a `bin` folder in your repository with an executable: `rockfish`
 
