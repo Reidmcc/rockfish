@@ -1,5 +1,10 @@
 ![rockfish banner](https://user-images.githubusercontent.com/43561569/52517026-2be8b480-2bfa-11e9-9f95-4379a7010ad1.png)
+![GitHub last commit](https://img.shields.io/github/last-commit/Reidmcc/rockfish.svg?style=for-the-badge)
+![license](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge&longCache=true)
 
+![Build Status](https://travis-ci.com/Reidmcc/rockfish.svg?branch=master)
+![GitHub issues](https://img.shields.io/github/issues/Reidmcc/rockfish.svg?style=flat-square&longCache=true)
+![GitHub pull requests](https://img.shields.io/github/issues-pr/Reidmcc/rockfish.svg?style=flat-square&longCache=true)
 
 Rockfish is an arbitrage bot for the Stellar Decentralized Exchange (SDEX). The SDEX is native to [Stellar's](https://www.stellar.org/) blockchain, and you can interact with it through third-party frontends, such as [Stellar X](https://www.stellarx.com/) and [Stellarport](https://stellarport.io/home).
 
