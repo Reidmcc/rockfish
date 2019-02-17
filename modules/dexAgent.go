@@ -39,6 +39,13 @@ type DexAgent struct {
 	seqNum       uint64
 	reloadSeqNum bool
 	baseAmount   *model.Number
+	countJobs    int
+}
+
+// TransData contains the data needed to contruct a path payment
+type TransData struct {
+	Path   *PaymentPath
+	Amount *model.Number
 }
 
 // MakeDexAgent is the factory method
@@ -60,6 +67,7 @@ func MakeDexAgent(
 ) *DexAgent {
 	//convertRatio := model.NumberFromFloat(minRatio, utils.SdexPrecision)
 	//convert
+	countJobs := 1
 	dexAgent := &DexAgent{
 		API:               api,
 		SourceSeed:        sourceSeed,
@@ -74,6 +82,7 @@ func MakeDexAgent(
 		useBalance:        useBalance,
 		simMode:           simMode,
 		l:                 l,
+		countJobs:         countJobs,
 	}
 
 	if dexAgent.SourceAccount == "" {
@@ -162,13 +171,13 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		return errors.Wrap(e, "SubmitOps error: ")
 	}
 
-	dA.l.Infof("pre-XDR raw was: %s", tx)
+	// dA.l.Infof("pre-XDR raw was: %s", tx)
 	// convert to xdr string
 	txeB64, e := dA.sign(tx)
 	if e != nil {
 		return e
 	}
-	dA.l.Infof("tx XDR: %s\n", txeB64)
+	// dA.l.Infof("tx XDR: %s\n", txeB64)
 
 	// submit
 	if !dA.simMode {
@@ -308,7 +317,7 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 	pw = pw.Through(convertAssetB)
 	// dA.l.Infof("With second Through is: %s", pw)
 
-	dA.l.Infof("raw build.PayWith set to: %s", pw)
+	// dA.l.Infof("raw build.PayWith set to: %s", pw)
 
 	// dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
@@ -436,4 +445,24 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 	)
 
 	return &payOp, nil
+}
+
+// TranSender sends transactions for profitable streamed results
+func (dA *DexAgent) TranSender(rank int, transJobs <-chan *TransData, stop <-chan bool) {
+	dA.l.Infof("TranSender %v initiated", rank)
+	for {
+		select {
+		case j := <-transJobs:
+
+			// for j := range transJobs {
+			// dA.incrementSeqNum()
+			// dA.l.Infof("TranSender %v taking job", rank)
+			dA.SendPaymentCycle(j.Path, j.Amount)
+		// dA.countJobs++
+		// runtime.Gosched()
+		case <-stop:
+			return
+
+		}
+	}
 }

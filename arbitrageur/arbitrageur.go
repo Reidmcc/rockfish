@@ -1,14 +1,16 @@
 package arbitrageur
 
 import (
+	"fmt"
+	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/Reidmcc/rockfish/modules"
 	"github.com/interstellar/kelp/api"
 	"github.com/interstellar/kelp/support/logger"
-	"github.com/interstellar/kelp/support/utils"
 	"github.com/nikhilsaraf/go-tools/multithreading"
-	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
 )
 
@@ -21,7 +23,10 @@ type Arbitrageur struct {
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
-	BookUpdates     <-chan horizon.OrderBookSummary
+	pairBook        []modules.TradingPair
+	booksOut        <-chan *horizon.OrderBookSummary
+	pathJobs        chan *modules.PaymentPath
+	transJobs       chan *modules.TransData
 	l               logger.Logger
 
 	// uninitialized
@@ -37,31 +42,42 @@ func MakeArbitrageur(
 	threadTracker *multithreading.ThreadTracker,
 	fixedIterations *uint64,
 	simMode bool,
+	booksOut <-chan *horizon.OrderBookSummary,
 	l logger.Logger,
 ) *Arbitrageur {
 
 	endAssetDisplay := pathFinder.HoldAsset.Code
-	var pairBook []modules.TradingPair
+	var rawPairBook []modules.TradingPair
+
+	pathJobs := make(chan *modules.PaymentPath, 20)
+	transJobs := make(chan *modules.TransData, 10)
 
 	assetBook := pathFinder.AssetBook
 
 	for i := 0; i < len(assetBook); i++ {
 		for n := 0; n < len(assetBook); n++ {
 			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
-				pairBook = append(pairBook, modules.TradingPair{assetBook[i].Asset, assetBook[n].Asset})
+				rawPairBook = append(rawPairBook, modules.TradingPair{Base: assetBook[i].Asset, Quote: assetBook[n].Asset})
 			}
 		}
 	}
 
-	encountered := map[string]bool{}
-
-	if utils.Asset2Asset(pathFinder.HoldAsset) == build.NativeAsset() {
-		endAssetDisplay = "XLM"
-
+	for i := 0; i < len(assetBook); i++ {
+		rawPairBook = append(rawPairBook, modules.TradingPair{Base: assetBook[i].Asset, Quote: pathFinder.HoldAsset})
 	}
-	bookTracker := multithreading.MakeThreadTracker()
 
-	a := Arbitrageur{
+	// removes inverted book duplicates
+	encountered := map[modules.TradingPair]bool{}
+	var pairBook []modules.TradingPair
+
+	for v := range rawPairBook {
+		if !encountered[rawPairBook[v]] && !encountered[modules.TradingPair{Base: rawPairBook[v].Quote, Quote: rawPairBook[v].Base}] {
+			encountered[rawPairBook[v]] = true
+			pairBook = append(pairBook, rawPairBook[v])
+		}
+	}
+
+	return &Arbitrageur{
 		PathFinder:      pathFinder,
 		DexWatcher:      dexWatcher,
 		DexAgent:        dexAgent,
@@ -69,22 +85,13 @@ func MakeArbitrageur(
 		threadTracker:   threadTracker,
 		fixedIterations: fixedIterations,
 		simMode:         simMode,
+		pairBook:        pairBook,
+		booksOut:        booksOut,
+		pathJobs:        pathJobs,
+		transJobs:       transJobs,
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
 	}
-
-	return &a
-	// return &Arbitrageur{
-	// 	PathFinder:      pathFinder,
-	// 	DexWatcher:      dexWatcher,
-	// 	DexAgent:        dexAgent,
-	// 	timeController:  timeController,
-	// 	threadTracker:   threadTracker,
-	// 	fixedIterations: fixedIterations,
-	// 	simMode:         simMode,
-	// 	l:               l,
-	// 	endAssetDisplay: endAssetDisplay,
-	// }
 }
 
 // Start ...starts
@@ -125,6 +132,67 @@ func (a *Arbitrageur) Start() {
 	}
 }
 
+// StartStreamMode starts in streaming mode
+func (a *Arbitrageur) StartStreamMode() {
+	// make a channel to stop the streams
+	stop := make(chan bool)
+
+	// start streams
+	a.startServices(stop)
+
+	// prep a ticker
+	ticker := time.NewTicker(10 * time.Second)
+	idleCounter := 0
+
+	for {
+		select {
+		case b := <-a.booksOut:
+			idleCounter = 0
+			// a.l.Infof("would have done something with %s/%s", b.Buying, b.Selling)
+
+			for i := 0; i < len(a.PathFinder.PathList); i++ {
+				if b.Selling == a.PathFinder.PathList[i].FirstPair.Base && b.Buying == a.PathFinder.PathList[i].FirstPair.Quote {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+				if b.Selling == a.PathFinder.PathList[i].FirstPair.Quote && b.Buying == a.PathFinder.PathList[i].FirstPair.Base {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+
+				if b.Selling == a.PathFinder.PathList[i].MidPair.Base && b.Buying == a.PathFinder.PathList[i].MidPair.Quote {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+				if b.Selling == a.PathFinder.PathList[i].MidPair.Quote && b.Buying == a.PathFinder.PathList[i].MidPair.Base {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+
+				if b.Selling == a.PathFinder.PathList[i].LastPair.Base && b.Buying == a.PathFinder.PathList[i].LastPair.Quote {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+				if b.Selling == a.PathFinder.PathList[i].LastPair.Quote && b.Buying == a.PathFinder.PathList[i].LastPair.Base {
+					a.pathJobs <- a.PathFinder.PathList[i]
+					continue
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		case <-ticker.C:
+			a.l.Infof("watching, idle count = %v\n", idleCounter)
+			idleCounter++
+			if idleCounter > 6 {
+				// we've gone 1 minute without a proc, streams may have droppped
+				stop <- true
+				a.startServices(stop)
+			}
+
+		}
+
+	}
+}
+
 func (a *Arbitrageur) cycle() {
 	bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
 	if e != nil {
@@ -140,4 +208,36 @@ func (a *Arbitrageur) cycle() {
 	}
 
 	return
+}
+
+func (a *Arbitrageur) handleLedger(ledger horizon.Ledger) {
+	a.l.Infof("got a ledger! %s", ledger)
+	// return nil
+}
+
+func (a *Arbitrageur) blockStats() {
+	for {
+		pprof.Lookup("block").WriteTo(os.Stdout, 1)
+		fmt.Println("# Goroutines:", runtime.NumGoroutine())
+	}
+}
+
+func (a *Arbitrageur) startServices(stop chan bool) {
+	a.l.Infof("Starting %v goroutines of each type", len(a.pairBook))
+	for b := range a.pairBook {
+		e := a.DexWatcher.AddTrackedBook(a.pairBook[b], "20", stop)
+		if e != nil {
+			a.l.Errorf("error adding streams: %s", e)
+		}
+	}
+
+	// prepare pathCheckers to accept book returns
+	for i := 0; i < len(a.pairBook); i++ {
+		go a.PathFinder.PathChecker(i, a.pathJobs, a.transJobs, stop)
+	}
+
+	// prepare TranSenders to send transactions
+	for i := 0; i < len(a.pairBook); i++ {
+		go a.DexAgent.TranSender(i, a.transJobs, stop)
+	}
 }

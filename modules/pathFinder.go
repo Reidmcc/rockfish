@@ -26,7 +26,7 @@ type PathFinder struct {
 	dexWatcher   DexWatcher
 	HoldAsset    horizon.Asset
 	AssetBook    []groupedAsset
-	PathList     []PaymentPath
+	PathList     []*PaymentPath
 	minRatio     *model.Number
 	useBalance   bool
 	staticAmount *model.Number
@@ -63,7 +63,7 @@ func MakePathFinder(
 		assetBook = append(assetBook, entry)
 	}
 
-	var pathList []PaymentPath
+	var pathList []*PaymentPath
 
 	endAssetDisplay := holdAsset.Code //this is just so XLM doesn't show up blank
 
@@ -135,7 +135,7 @@ func (c ArbitCycleConfig) String() string {
 }
 
 // makePaymentPath makes a payment path
-func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) PaymentPath {
+func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) *PaymentPath {
 	// first pair is selling hold for asset A, so inverted from the intuitive
 	firstPair := TradingPair{
 		Base:  holdAsset,
@@ -149,7 +149,7 @@ func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horiz
 		Base:  assetB,
 		Quote: holdAsset,
 	}
-	return PaymentPath{
+	return &PaymentPath{
 		HoldAsset:  holdAsset,
 		PathAssetA: assetA,
 		PathAssetB: assetB,
@@ -164,7 +164,7 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 	bestRatio := model.NumberConstants.Zero
 	maxAmount := model.NumberConstants.Zero
 	metThreshold := false
-	var bestPath PaymentPath
+	var bestPath *PaymentPath
 
 	for i := p.assetBookMark; i < len(p.PathList); i++ {
 		currentPath := p.PathList[i]
@@ -197,11 +197,11 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 
 	p.l.Info("")
 	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
-	return &bestPath, maxAmount, metThreshold, nil
+	return bestPath, maxAmount, metThreshold, nil
 }
 
 // calculatePathValues returns the path's best ratio and max amount at that ratio
-func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *model.Number, error) {
+func (p *PathFinder) calculatePathValues(path *PaymentPath) (*model.Number, *model.Number, error) {
 
 	// first pair is selling the hold asset for asset A
 	firstPairTopBidPrice, firstPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.FirstPair)
@@ -264,6 +264,47 @@ func (p *PathFinder) calculatePathValues(path PaymentPath) (*model.Number, *mode
 	}
 
 	return ratio, maxCycleAmount, nil
+}
+
+// PathChecker checks path ratios for a single path, triggered by orderbook stream returns
+func (p *PathFinder) PathChecker(rank int, pathJobs <-chan *PaymentPath, transJobs chan<- *TransData, stop <-chan bool) {
+	// p.l.Infof("PathChecker %v initiated", rank)
+	for {
+		select {
+		case j := <-pathJobs:
+			// p.l.Infof("PathCheck %v taking job", rank)
+			amount, metThreshold, e := p.checkOnePath(j)
+			if e != nil {
+				p.l.Errorf("error checking path %s", e)
+			}
+			if metThreshold {
+				transJobs <- &TransData{j, amount}
+			}
+		case <-stop:
+			return
+		}
+	}
+}
+
+// checkOnePath does the work of a PathChecker
+func (p *PathFinder) checkOnePath(path *PaymentPath) (*model.Number, bool, error) {
+	metThreshold := false
+
+	ratio, amount, e := p.calculatePathValues(path)
+	if e != nil {
+		return nil, false, fmt.Errorf("Error while calculating ratios %s", e)
+	}
+
+	p.l.Infof("Return ratio | Cycle amount for path %s -> %s - > %s -> %s was %v | %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), amount.AsFloat())
+
+	if ratio.AsFloat() >= p.minRatio.AsFloat() {
+		metThreshold = true
+		p.l.Info("")
+		p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
+		p.l.Info("")
+	}
+
+	return amount, metThreshold, nil
 }
 
 // WhatRatio returns the minimum ratio

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -25,28 +26,27 @@ import (
 
 // DexWatcher is an object that queries the DEX
 type DexWatcher struct {
-	API            *horizon.Client
-	Network        build.Network
-	TradingAccount string
-	threadTracker  *multithreading.ThreadTracker
-	l              logger.Logger
+	API           *horizon.Client
+	Network       build.Network
+	threadTracker *multithreading.ThreadTracker
+	booksOut      chan<- *horizon.OrderBookSummary
+	l             logger.Logger
 }
 
 // MakeDexWatcher is the factory method
 func MakeDexWatcher(
 	api *horizon.Client,
 	network build.Network,
-	tradingAccount string,
+	threadTracker *multithreading.ThreadTracker,
+	booksOut chan<- *horizon.OrderBookSummary,
 	l logger.Logger) *DexWatcher {
 
-	threadTracker := multithreading.MakeThreadTracker()
-
 	return &DexWatcher{
-		API:            api,
-		Network:        network,
-		TradingAccount: tradingAccount,
-		threadTracker:  threadTracker,
-		l:              l,
+		API:           api,
+		Network:       network,
+		threadTracker: threadTracker,
+		booksOut:      booksOut,
+		l:             l,
 	}
 }
 
@@ -121,13 +121,13 @@ func (w *DexWatcher) GetOrderBook(api *horizon.Client, pair TradingPair) (orderB
 }
 
 // GetPaths gets and parses the find-path data for an asset from horizon
-func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number) (*FindPathResponse, error) {
+func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number, tradingAccount string) (*FindPathResponse, error) {
 	var s strings.Builder
 	var paths FindPathResponse
 	amountString := amount.AsString()
 
-	s.WriteString(fmt.Sprintf("%s/paths?source_account=%s", w.API.URL, w.TradingAccount))
-	s.WriteString(fmt.Sprintf("&destination_account=%s", w.TradingAccount))
+	s.WriteString(fmt.Sprintf("%s/paths?source_account=%s", w.API.URL, tradingAccount))
+	s.WriteString(fmt.Sprintf("&destination_account=%s", tradingAccount))
 	s.WriteString(fmt.Sprintf("&destination_asset_type=%s", endAsset.Type))
 	s.WriteString(fmt.Sprintf("&destination_asset_code=%s", endAsset.Code))
 	s.WriteString(fmt.Sprintf("&destination_asset_issuer=%s", endAsset.Issuer))
@@ -162,44 +162,62 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number) (*Fi
 }
 
 // AddTrackedBook adds a pair's orderbook to the BookTracker
-func (w *DexWatcher) AddTrackedBook(pair TradingPair) error {
-	query := url.Values{}
+// just do it manually FFS
+func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan bool) error {
+	quoteCodeDisplay := pair.Quote.Code
+	if pair.Quote.Type == "native" {
+		quoteCodeDisplay = "XLM"
+	}
 
-	query.Add("selling_asset_type", pair.Base.Type)
-	query.Add("selling_asset_code", pair.Base.Code)
-	query.Add("selling_asset_issuer", pair.Base.Issuer)
+	w.l.Infof("Adding stream for %s|%s vs %s|%s", pair.Base.Code, pair.Base.Issuer, quoteCodeDisplay, pair.Quote.Issuer)
 
-	query.Add("buying_asset_type", pair.Quote.Type)
-	query.Add("buying_asset_code", pair.Quote.Code)
-	query.Add("buying_asset_issuer", pair.Quote.Issuer)
+	var s strings.Builder
+	s.WriteString(fmt.Sprintf(strings.TrimRight(w.API.URL, "/")))
+	s.WriteString("/order_book?")
+	s.WriteString(fmt.Sprintf("selling_asset_type=%s", pair.Base.Type))
+	s.WriteString(fmt.Sprintf("&selling_asset_code=%s", pair.Base.Code))
+	s.WriteString(fmt.Sprintf("&selling_asset_issuer=%s", pair.Base.Issuer))
+	s.WriteString(fmt.Sprintf("&buying_asset_type=%s", pair.Quote.Type))
+	s.WriteString(fmt.Sprintf("&buying_asset_code=%s", pair.Quote.Code))
+	s.WriteString(fmt.Sprintf("&buying_asset_issuer=%s", pair.Quote.Issuer))
+	s.WriteString(fmt.Sprintf("&limit=%s", limit))
 
-	bookURL := query.Encode()
-
-	// w.BookTracker.TriggerGoroutine(w.stream(context.Background(), bookURL, nil, w.handleReturnedBook))
+	url := s.String()
 
 	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-		w.stream(context.Background(), bookURL, nil, w.handleReturnedBook)
+		w.stream(context.Background(), url, nil, stop, func(data []byte) error {
+			var book *horizon.OrderBookSummary
+			e := json.Unmarshal(data, &book)
+			if e != nil {
+				return fmt.Errorf("error unmarshaling data: %s", e)
+			}
+			w.handleReturnedBook(book)
+			return nil
+		})
 	}, nil)
 
 	return nil
 }
 
-func (w *DexWatcher) handleReturnedBook(data []byte) error {
-	var book *horizon.OrderBookSummary
-	json.Unmarshal([]byte(data), &book)
+func (w *DexWatcher) handleReturnedBook(book *horizon.OrderBookSummary) {
+	quoteCodeDisplay := book.Buying.Code
+	// if book.Buying.Type == "native" {
+	// 	quoteCodeDisplay = "XLM"
+	// }
 
-	BookUpdates <- book
-
-	return nil
+	w.l.Infof("orderbook for %s|%s vs %s|%s updated, checking relevant paths", book.Selling.Code, book.Selling.Issuer, quoteCodeDisplay, book.Buying.Issuer)
+	w.booksOut <- book
 }
 
-// this is the stream function from horizon.client, but horizon doesn't expose it
+// this is adapted from the stream function from horizon.client
 func (w *DexWatcher) stream(
 	ctx context.Context,
 	baseURL string,
 	cursor *horizon.Cursor,
+	stop <-chan bool,
 	handler func(data []byte) error,
 ) error {
+	// inboundStream := make(chan *http.Response)
 	query := url.Values{}
 	if cursor != nil {
 		query.Set("cursor", string(*cursor))
@@ -207,22 +225,41 @@ func (w *DexWatcher) stream(
 
 	client := http.Client{}
 
+	// for {
+
+	// for {
+	if cursor != nil {
+		baseURL = fmt.Sprintf("%s?%s", baseURL, query.Encode())
+	}
+	// whoa, got stuck in a loop spamming Horizon!
+
+	w.l.Infof("Submitting url: %s", baseURL)
+
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s", baseURL), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Make sure we don't use c.HTTP that can have Timeout set.
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	ticker := time.NewTicker(10 * time.Millisecond)
+
 	for {
-		req, err := http.NewRequest("GET", fmt.Sprintf("%s?%s", baseURL, query.Encode()), nil)
-		if err != nil {
-			return err
+		// time.Sleep(10 * time.Millisecond)
+		select {
+		case <-stop:
+			w.l.Info("I stopped!")
+			return nil
+		case <-ticker.C:
 		}
-		req.Header.Set("Accept", "text/event-stream")
-
-		// Make sure we don't use c.HTTP that can have Timeout set.
-		resp, err := client.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		reader := bufio.NewReader(resp.Body)
-
+		// w.l.Info("ya")
 		// Read events one by one. Break this loop when there is no more data to be
 		// read from resp.Body (io.EOF).
 	Events:
@@ -298,5 +335,5 @@ func (w *DexWatcher) stream(
 				}
 			}
 		}
-	}
+	} //return fmt.Errorf("reached end of streaming func")
 }

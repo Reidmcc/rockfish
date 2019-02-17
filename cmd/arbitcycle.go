@@ -159,10 +159,13 @@ func init() {
 			l,
 		)
 
+		booksOut := make(chan *horizon.OrderBookSummary, 100)
+
 		dexWatcher := modules.MakeDexWatcher(
 			client,
 			utils.ParseNetwork(arbitConfig.HorizonURL),
-			arbitConfig.TradingAccount(),
+			threadTracker,
+			booksOut,
 			l)
 
 		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, l)
@@ -183,6 +186,7 @@ func init() {
 			threadTracker,
 			fixedIterations,
 			*simMode,
+			booksOut,
 			l,
 		)
 
@@ -195,7 +199,7 @@ func init() {
 		}
 
 		l.Info("Starting the trader bot...")
-		arbitrageur.Start()
+		arbitrageur.StartStreamMode()
 	}
 }
 
