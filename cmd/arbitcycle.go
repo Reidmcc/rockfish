@@ -181,7 +181,7 @@ func init() {
 		arbitrageur := arbitrageur.MakeArbitrageur(
 			*pathFinder,
 			*dexWatcher,
-			*dexAgent,
+			dexAgent,
 			timeController,
 			threadTracker,
 			fixedIterations,

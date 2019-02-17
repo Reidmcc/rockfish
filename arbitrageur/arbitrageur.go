@@ -18,7 +18,7 @@ import (
 type Arbitrageur struct {
 	PathFinder      modules.PathFinder
 	DexWatcher      modules.DexWatcher
-	DexAgent        modules.DexAgent
+	DexAgent        *modules.DexAgent
 	timeController  api.TimeController
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
@@ -37,7 +37,7 @@ type Arbitrageur struct {
 func MakeArbitrageur(
 	pathFinder modules.PathFinder,
 	dexWatcher modules.DexWatcher,
-	dexAgent modules.DexAgent,
+	dexAgent *modules.DexAgent,
 	timeController api.TimeController,
 	threadTracker *multithreading.ThreadTracker,
 	fixedIterations *uint64,
@@ -148,48 +148,72 @@ func (a *Arbitrageur) StartStreamMode() {
 		select {
 		case b := <-a.booksOut:
 			idleCounter = 0
-			// a.l.Infof("would have done something with %s/%s", b.Buying, b.Selling)
-
 			for i := 0; i < len(a.PathFinder.PathList); i++ {
 				if b.Selling == a.PathFinder.PathList[i].FirstPair.Base && b.Buying == a.PathFinder.PathList[i].FirstPair.Quote {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
+
 				if b.Selling == a.PathFinder.PathList[i].FirstPair.Quote && b.Buying == a.PathFinder.PathList[i].FirstPair.Base {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
 
 				if b.Selling == a.PathFinder.PathList[i].MidPair.Base && b.Buying == a.PathFinder.PathList[i].MidPair.Quote {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
+
 				if b.Selling == a.PathFinder.PathList[i].MidPair.Quote && b.Buying == a.PathFinder.PathList[i].MidPair.Base {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
 
 				if b.Selling == a.PathFinder.PathList[i].LastPair.Base && b.Buying == a.PathFinder.PathList[i].LastPair.Quote {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
+
 				if b.Selling == a.PathFinder.PathList[i].LastPair.Quote && b.Buying == a.PathFinder.PathList[i].LastPair.Base {
-					a.pathJobs <- a.PathFinder.PathList[i]
+					a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
+
+					if !a.PathFinder.PathList[i].ShouldDelay {
+						a.PathFinder.PathList[i].ShouldDelay = true
+						a.pathJobs <- a.PathFinder.PathList[i]
+					}
 					continue
 				}
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		case <-ticker.C:
 			a.l.Infof("watching, idle count = %v\n", idleCounter)
 			idleCounter++
-			if idleCounter > 6 {
+			if idleCounter >= 6 {
 				// we've gone 1 minute without a proc, streams may have droppped
 				stop <- true
 				a.startServices(stop)
 			}
-
 		}
-
 	}
 }
 

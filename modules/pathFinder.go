@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -76,11 +77,16 @@ func MakePathFinder(
 	for i := 0; i < len(assetBook); i++ {
 		for n := 0; n < len(assetBook); n++ {
 			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
-				path := makePaymentPath(assetBook[i].Asset, assetBook[n].Asset, holdAsset)
+				path := makePaymentPath(i, assetBook[i].Asset, assetBook[n].Asset, holdAsset)
 				l.Infof("added path: %s -> %s | %s -> %s | %s -> %s", endAssetDisplay, assetBook[i].Asset.Code, assetBook[i].Asset.Issuer, assetBook[n].Asset.Code, assetBook[n].Asset.Issuer, endAssetDisplay)
 				pathList = append(pathList, path)
 			}
 		}
+	}
+
+	// fixed agent IDs for testing; remove agent IDs when done testing
+	for i := 0; i < len(pathList); i++ {
+		pathList[i].AgentID = i
 	}
 
 	// assetBookMark ensures we don't get stuck on one asset
@@ -116,12 +122,14 @@ type TradingPair struct {
 
 // PaymentPath is a pair of assets for a payment path and their encoded tradingPair
 type PaymentPath struct {
-	HoldAsset  horizon.Asset
-	PathAssetA horizon.Asset
-	PathAssetB horizon.Asset
-	FirstPair  TradingPair
-	MidPair    TradingPair
-	LastPair   TradingPair
+	AgentID     int
+	HoldAsset   horizon.Asset
+	PathAssetA  horizon.Asset
+	PathAssetB  horizon.Asset
+	FirstPair   TradingPair
+	MidPair     TradingPair
+	LastPair    TradingPair
+	ShouldDelay bool
 }
 
 type basicOrderBookLevel struct {
@@ -135,7 +143,7 @@ func (c ArbitCycleConfig) String() string {
 }
 
 // makePaymentPath makes a payment path
-func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) *PaymentPath {
+func makePaymentPath(agentID int, assetA horizon.Asset, assetB horizon.Asset, holdAsset horizon.Asset) *PaymentPath {
 	// first pair is selling hold for asset A, so inverted from the intuitive
 	firstPair := TradingPair{
 		Base:  holdAsset,
@@ -150,12 +158,14 @@ func makePaymentPath(assetA horizon.Asset, assetB horizon.Asset, holdAsset horiz
 		Quote: holdAsset,
 	}
 	return &PaymentPath{
-		HoldAsset:  holdAsset,
-		PathAssetA: assetA,
-		PathAssetB: assetB,
-		FirstPair:  firstPair,
-		MidPair:    midPair,
-		LastPair:   lastPair,
+		AgentID:     agentID,
+		HoldAsset:   holdAsset,
+		PathAssetA:  assetA,
+		PathAssetB:  assetB,
+		FirstPair:   firstPair,
+		MidPair:     midPair,
+		LastPair:    lastPair,
+		ShouldDelay: false,
 	}
 }
 
@@ -184,7 +194,7 @@ func (p *PathFinder) FindBestPath() (*PaymentPath, *model.Number, bool, error) {
 			bestPath = currentPath
 		}
 
-		p.l.Infof("Return ratio | Cycle amount for path %s -> %s - > %s -> %s was %v | %v\n", p.endAssetDisplay, currentPath.PathAssetA.Code, currentPath.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), amount.AsFloat())
+		p.l.Infof("Return ratio | Cycle amount for path %v: %s -> %s - > %s -> %s was %v | %v\n", p.PathList[i].AgentID, p.endAssetDisplay, currentPath.PathAssetA.Code, currentPath.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), amount.AsFloat())
 
 		if bestRatio.AsFloat() >= p.minRatio.AsFloat() {
 			metThreshold = true
@@ -268,11 +278,10 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath) (*model.Number, *mod
 
 // PathChecker checks path ratios for a single path, triggered by orderbook stream returns
 func (p *PathFinder) PathChecker(rank int, pathJobs <-chan *PaymentPath, transJobs chan<- *TransData, stop <-chan bool) {
-	// p.l.Infof("PathChecker %v initiated", rank)
 	for {
 		select {
 		case j := <-pathJobs:
-			// p.l.Infof("PathCheck %v taking job", rank)
+			p.l.Infof("checking path %v", j.AgentID)
 			amount, metThreshold, e := p.checkOnePath(j)
 			if e != nil {
 				p.l.Errorf("error checking path %s", e)
@@ -280,6 +289,12 @@ func (p *PathFinder) PathChecker(rank int, pathJobs <-chan *PaymentPath, transJo
 			if metThreshold {
 				transJobs <- &TransData{j, amount}
 			}
+			// this timer prevents useless simultaneous rechecks
+			resetTimer := time.NewTimer(3 * time.Second)
+			p.l.Infof("delayed resend of path %v", j.AgentID)
+			<-resetTimer.C
+			p.l.Infof("released path %v", j.AgentID)
+			j.ShouldDelay = false
 		case <-stop:
 			return
 		}

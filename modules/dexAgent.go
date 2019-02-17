@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -39,7 +40,7 @@ type DexAgent struct {
 	seqNum       uint64
 	reloadSeqNum bool
 	baseAmount   *model.Number
-	countJobs    int
+	transMutex   sync.Mutex
 }
 
 // TransData contains the data needed to contruct a path payment
@@ -65,9 +66,6 @@ func MakeDexAgent(
 	simMode bool,
 	l logger.Logger,
 ) *DexAgent {
-	//convertRatio := model.NumberFromFloat(minRatio, utils.SdexPrecision)
-	//convert
-	countJobs := 1
 	dexAgent := &DexAgent{
 		API:               api,
 		SourceSeed:        sourceSeed,
@@ -82,7 +80,6 @@ func MakeDexAgent(
 		useBalance:        useBalance,
 		simMode:           simMode,
 		l:                 l,
-		countJobs:         countJobs,
 	}
 
 	if dexAgent.SourceAccount == "" {
@@ -158,6 +155,7 @@ func (dA *DexAgent) JustAssetBalance(asset horizon.Asset) (float64, error) {
 
 // SubmitOps submits the passed in operations to the network asynchronously in a single transaction
 func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func(hash string, e error)) error {
+	dA.transMutex.Lock()
 	dA.reloadSeqNum = true
 	dA.incrementSeqNum()
 	muts := []build.TransactionMutator{
@@ -189,6 +187,7 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		dA.l.Info("not submitting tx XDR to network in simulation mode, calling asyncCallback with empty hash value")
 		dA.invokeAsyncCallback(asyncCallback, "", nil)
 	}
+	dA.transMutex.Unlock()
 	return nil
 }
 
@@ -449,17 +448,13 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 
 // TranSender sends transactions for profitable streamed results
 func (dA *DexAgent) TranSender(rank int, transJobs <-chan *TransData, stop <-chan bool) {
-	dA.l.Infof("TranSender %v initiated", rank)
 	for {
 		select {
 		case j := <-transJobs:
-
-			// for j := range transJobs {
-			// dA.incrementSeqNum()
-			// dA.l.Infof("TranSender %v taking job", rank)
+			dA.l.Info("")
+			dA.l.Info("triggering transaction")
+			dA.l.Info("")
 			dA.SendPaymentCycle(j.Path, j.Amount)
-		// dA.countJobs++
-		// runtime.Gosched()
 		case <-stop:
 			return
 
