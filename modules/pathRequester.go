@@ -217,7 +217,7 @@ func (p *PathRequester) findMaxAmount(sendPath PathRecord) (*model.Number, error
 		p.l.Infof("found path asset: %s", d)
 	}
 
-	var bidSeries []basicOrderBookLevel
+	var bidSeries []BasicOrderBookLevel
 
 	for _, r := range pathPairs {
 		topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(r)
@@ -226,7 +226,7 @@ func (p *PathRequester) findMaxAmount(sendPath PathRecord) (*model.Number, error
 		}
 		bidSeries = append(
 			bidSeries,
-			basicOrderBookLevel{
+			BasicOrderBookLevel{
 				Price:  topBidPrice,
 				Amount: topBidAmount,
 			},

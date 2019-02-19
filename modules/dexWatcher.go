@@ -50,8 +50,6 @@ func MakeDexWatcher(
 	}
 }
 
-// type pathResponse
-
 // GetTopBid returns the top bid's price and amount for a trading pair
 func (w *DexWatcher) GetTopBid(pair TradingPair) (*model.Number, *model.Number, error) {
 	orderBook, e := w.GetOrderBook(w.API, pair)
@@ -218,6 +216,7 @@ func (w *DexWatcher) stream(
 	handler func(data []byte) error,
 ) error {
 	// inboundStream := make(chan *http.Response)
+	timer := time.NewTimer(5 * time.Minute)
 	query := url.Values{}
 	if cursor != nil {
 		query.Set("cursor", string(*cursor))
@@ -233,7 +232,7 @@ func (w *DexWatcher) stream(
 	}
 	// whoa, got stuck in a loop spamming Horizon!
 
-	w.l.Infof("Submitting url: %s", baseURL)
+	// w.l.Infof("Submitting url: %s", baseURL)
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s", baseURL), nil)
 	if err != nil {
@@ -256,6 +255,9 @@ func (w *DexWatcher) stream(
 		select {
 		case <-stop:
 			w.l.Info("I stopped!")
+			return nil
+		case <-timer.C:
+			w.l.Info("I timed out!")
 			return nil
 		case <-ticker.C:
 		}
