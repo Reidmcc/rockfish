@@ -154,9 +154,7 @@ func (dA *DexAgent) JustAssetBalance(asset horizon.Asset) (float64, error) {
 }
 
 // SubmitOps submits the passed in operations to the network asynchronously in a single transaction
-func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func(hash string, e error), hold chan<- bool, done chan<- bool) error {
-	dA.transMutex.Lock()
-	hold <- true
+func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func(hash string, e error)) error {
 	dA.reloadSeqNum = true
 	dA.incrementSeqNum()
 	muts := []build.TransactionMutator{
@@ -188,8 +186,6 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		dA.l.Info("not submitting tx XDR to network in simulation mode, calling asyncCallback with empty hash value")
 		dA.invokeAsyncCallback(asyncCallback, "", nil)
 	}
-	done <- true
-	dA.transMutex.Unlock()
 	return nil
 }
 
@@ -251,7 +247,7 @@ func (dA *DexAgent) minReserve(subentries int32) float64 {
 }
 
 // SendPaymentCycle executes a payment cycle
-func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number, hold chan bool, done chan bool) error {
+func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number) error {
 
 	payOp, e := dA.makePathPayment(path, maxAmount)
 	if e != nil {
@@ -262,7 +258,7 @@ func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number,
 	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
 	opList = append(opList, payOp)
 
-	e = dA.SubmitOps(opList, nil, hold, done)
+	e = dA.SubmitOps(opList, nil)
 	if e != nil {
 		return fmt.Errorf("error submitting path payment op: %s", e)
 	}
@@ -359,7 +355,7 @@ func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, 
 	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
 	opList = append(opList, payOp)
 
-	e = dA.SubmitOps(opList, nil, hold, done)
+	e = dA.SubmitOps(opList, nil)
 	if e != nil {
 		return fmt.Errorf("error submitting path payment op: %s", e)
 	}
@@ -446,23 +442,4 @@ func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon
 	)
 
 	return &payOp, nil
-}
-
-// TranSender sends transactions for profitable streamed results
-func (dA *DexAgent) TranSender(rank int, transJobs <-chan *TransData, stop <-chan bool, hold chan bool, done chan bool) {
-	for {
-		// dA.l.Info("Spawned TransSender")
-		// timer := time.NewTimer(10 * time.Second)
-		select {
-		case j := <-transJobs:
-			dA.l.Info("")
-			dA.l.Info("triggering transaction")
-			dA.l.Info("")
-			dA.SendPaymentCycle(j.Path, j.Amount, hold, done)
-			// case <-timer.C:
-			// dA.l.Info("TransSender timed out")
-			// return
-
-		}
-	}
 }

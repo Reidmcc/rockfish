@@ -18,7 +18,6 @@ import (
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/manucorporat/sse"
-	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/pkg/errors"
 	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
@@ -26,27 +25,27 @@ import (
 
 // DexWatcher is an object that queries the DEX
 type DexWatcher struct {
-	API           *horizon.Client
-	Network       build.Network
-	threadTracker *multithreading.ThreadTracker
-	booksOut      chan<- *horizon.OrderBookSummary
-	l             logger.Logger
+	API        *horizon.Client
+	Network    build.Network
+	booksOut   chan<- *horizon.OrderBookSummary
+	ledgerPing chan<- bool
+	l          logger.Logger
 }
 
 // MakeDexWatcher is the factory method
 func MakeDexWatcher(
 	api *horizon.Client,
 	network build.Network,
-	threadTracker *multithreading.ThreadTracker,
 	booksOut chan<- *horizon.OrderBookSummary,
+	ledgerPing chan<- bool,
 	l logger.Logger) *DexWatcher {
 
 	return &DexWatcher{
-		API:           api,
-		Network:       network,
-		threadTracker: threadTracker,
-		booksOut:      booksOut,
-		l:             l,
+		API:        api,
+		Network:    network,
+		booksOut:   booksOut,
+		ledgerPing: ledgerPing,
+		l:          l,
 	}
 }
 
@@ -75,8 +74,6 @@ func (w *DexWatcher) GetTopBid(pair TradingPair) (*model.Number, *model.Number, 
 	floatPrice := topBidPrice.AsFloat()
 	topBidAmount = topBidAmount.Scale(1 / floatPrice)
 
-	//w.l.Infof("topBidPrice for pair Base = %s Quote =%s was %v", pair.Base.Code, pair.Quote.Code, topBidPrice)
-
 	return topBidPrice, topBidAmount, nil
 }
 
@@ -100,8 +97,6 @@ func (w *DexWatcher) GetLowAsk(pair TradingPair) (*model.Number, *model.Number, 
 	if e != nil {
 		return nil, nil, fmt.Errorf("Error converting to model.Number: %s", e)
 	}
-
-	//w.l.Infof("lowAskPrice for pair Base = %s Quote =%s was %v", pair.Base.Code, pair.Quote.Code, lowAskPrice)
 
 	return lowAskPrice, lowAskAmount, nil
 }
@@ -131,18 +126,12 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number, trad
 	s.WriteString(fmt.Sprintf("&destination_asset_issuer=%s", endAsset.Issuer))
 	s.WriteString(fmt.Sprintf("&destination_amount=%s", amountString))
 
-	//w.l.Infof("GET string built as: %s", s.String())
-
 	resp, e := w.API.HTTP.Get(s.String())
-
-	//resp, e := w.API.HTTP.Get("https://horizon.stellar.org/paths?source_account=GDJQ7DGRBAPJMBMDNDZIBCW4SFZ55GWEHYEPGLRJQW46NGBUSYSCLSLV&destination_account=GDJQ7DGRBAPJMBMDNDZIBCW4SFZ55GWEHYEPGLRJQW46NGBUSYSCLSLV&destination_asset_type=credit_alphanum4&destination_asset_code=BTC&destination_asset_issuer=GBSTRH4QOTWNSVA6E4HFERETX4ZLSR3CIUBLK7AXYII277PFJC4BBYOG&destination_amount=.0000001")
 
 	if e != nil {
 		return nil, e
 	}
-	// w.l.Info("")
-	// w.l.Infof("Raw horizon response was %s\n", resp.Body)
-	// w.l.Info("")
+
 	defer resp.Body.Close()
 	byteResp, e := ioutil.ReadAll(resp.Body)
 	if e != nil {
@@ -150,17 +139,44 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number, trad
 	}
 
 	json.Unmarshal([]byte(byteResp), &paths)
-	// if len(paths.Embedded.Records) > 0 {
-	// 	w.l.Info("")
-	// 	w.l.Infof("Unmarshalled into: %+v\n", paths.Embedded.Records[0])
-	// 	w.l.Info("")
-	// }
-
 	return &paths, nil
 }
 
+// StreamManager just refreshes the ledger streams as they expire; horizon closes them after 55 seconds on its own
+func (w *DexWatcher) StreamManager() {
+	streamTicker := time.NewTicker(50 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+		go w.StreamLedgers(ctx, nil, w.ledgerNotify)
+		<-streamTicker.C
+		cancel()
+	}
+}
+
+// StreamLedgers streams Stellar ledgers
+func (w *DexWatcher) StreamLedgers(
+	ctx context.Context,
+	cursor *horizon.Cursor,
+	handler horizon.LedgerHandler,
+) (err error) {
+	url := fmt.Sprintf("%s/ledgers", w.API.URL)
+	return w.stream(ctx, url, cursor, func(data []byte) error {
+		var ledger horizon.Ledger
+		e := json.Unmarshal(data, &ledger)
+		if e != nil {
+			return fmt.Errorf("error unmarshalling data: %s", e)
+		}
+		handler(ledger)
+		return nil
+	})
+}
+
+// ledgerNotify just says that a ledger came in for sync purposes
+func (w *DexWatcher) ledgerNotify(ledger horizon.Ledger) {
+	w.ledgerPing <- true
+}
+
 // AddTrackedBook adds a pair's orderbook to the BookTracker
-// just do it manually FFS
 func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan bool) error {
 	quoteCodeDisplay := pair.Quote.Code
 	if pair.Quote.Type == "native" {
@@ -182,26 +198,21 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan 
 
 	url := s.String()
 
-	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-		w.stream(context.Background(), url, nil, stop, func(data []byte) error {
-			var book *horizon.OrderBookSummary
-			e := json.Unmarshal(data, &book)
-			if e != nil {
-				return fmt.Errorf("error unmarshaling data: %s", e)
-			}
-			w.handleReturnedBook(book)
-			return nil
-		})
-	}, nil)
+	go w.stream(context.Background(), url, nil, func(data []byte) error {
+		var book *horizon.OrderBookSummary
+		e := json.Unmarshal(data, &book)
+		if e != nil {
+			return fmt.Errorf("error unmarshaling data: %s", e)
+		}
+		w.handleReturnedBook(book)
+		return nil
+	})
 
 	return nil
 }
 
 func (w *DexWatcher) handleReturnedBook(book *horizon.OrderBookSummary) {
 	quoteCodeDisplay := book.Buying.Code
-	// if book.Buying.Type == "native" {
-	// 	quoteCodeDisplay = "XLM"
-	// }
 
 	w.l.Infof("orderbook for %s|%s vs %s|%s updated, checking relevant paths", book.Selling.Code, book.Selling.Issuer, quoteCodeDisplay, book.Buying.Issuer)
 	w.booksOut <- book
@@ -212,11 +223,8 @@ func (w *DexWatcher) stream(
 	ctx context.Context,
 	baseURL string,
 	cursor *horizon.Cursor,
-	stop <-chan bool,
 	handler func(data []byte) error,
 ) error {
-	// inboundStream := make(chan *http.Response)
-	timer := time.NewTimer(5 * time.Minute)
 	query := url.Values{}
 	if cursor != nil {
 		query.Set("cursor", string(*cursor))
@@ -230,9 +238,6 @@ func (w *DexWatcher) stream(
 	if cursor != nil {
 		baseURL = fmt.Sprintf("%s?%s", baseURL, query.Encode())
 	}
-	// whoa, got stuck in a loop spamming Horizon!
-
-	// w.l.Infof("Submitting url: %s", baseURL)
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s", baseURL), nil)
 	if err != nil {
@@ -251,26 +256,13 @@ func (w *DexWatcher) stream(
 	ticker := time.NewTicker(10 * time.Millisecond)
 
 	for {
-		// time.Sleep(10 * time.Millisecond)
-		select {
-		case <-stop:
-			w.l.Info("I stopped!")
-			return nil
-		case <-timer.C:
-			w.l.Info("I timed out!")
-			return nil
-		case <-ticker.C:
-		}
-		// w.l.Info("ya")
+
+		<-ticker.C
+
 		// Read events one by one. Break this loop when there is no more data to be
 		// read from resp.Body (io.EOF).
 	Events:
 		for {
-			// Read until empty line = event delimiter. The perfect solution would be to read
-			// as many bytes as possible and forward them to sse.Decode. However this
-			// requires much more complicated code.
-			// We could also write our own `sse` package that works fine with streams directly
-			// (github.com/manucorporat/sse is just using io/ioutils.ReadAll).
 			var buffer bytes.Buffer
 			nonEmptylinesRead := 0
 			for {
@@ -285,11 +277,6 @@ func (w *DexWatcher) stream(
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err == io.EOF {
-						// Currently Horizon appends a new line after the last event so this is not really
-						// needed. We have this code here in case this behaviour is changed in a future.
-						// From spec:
-						// > Once the end of the file is reached, the user agent must dispatch the
-						// > event one final time, as defined below.
 						if nonEmptylinesRead == 0 {
 							break Events
 						}
@@ -312,8 +299,6 @@ func (w *DexWatcher) stream(
 				return err
 			}
 
-			// Right now len(events) should always be 1. This loop will be helpful after writing
-			// new SSE decoder that can handle io.Reader without using ioutils.ReadAll().
 			for _, event := range events {
 				if event.Event != "message" {
 					continue
@@ -337,5 +322,5 @@ func (w *DexWatcher) stream(
 				}
 			}
 		}
-	} //return fmt.Errorf("reached end of streaming func")
+	}
 }
