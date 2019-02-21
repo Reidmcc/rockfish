@@ -15,7 +15,7 @@ func TestStream(t *testing.T) {
 
 	booksOut := make(chan *horizon.OrderBookSummary, 100)
 	stop := make(chan bool)
-	ledgerPing := make(chan bool)
+	ledgerPing := make(chan horizon.Ledger)
 
 	client := &horizon.Client{
 		URL:  "https://horizon.stellar.org/",

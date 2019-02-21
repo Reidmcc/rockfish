@@ -18,6 +18,7 @@ import (
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/manucorporat/sse"
+	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/pkg/errors"
 	"github.com/stellar/go/build"
 	"github.com/stellar/go/clients/horizon"
@@ -25,27 +26,30 @@ import (
 
 // DexWatcher is an object that queries the DEX
 type DexWatcher struct {
-	API        *horizon.Client
-	Network    build.Network
-	booksOut   chan<- *horizon.OrderBookSummary
-	ledgerPing chan<- bool
-	l          logger.Logger
+	API           *horizon.Client
+	Network       build.Network
+	threadTracker *multithreading.ThreadTracker
+	booksOut      chan<- *horizon.OrderBookSummary
+	ledgerOut     chan horizon.Ledger
+	l             logger.Logger
 }
 
 // MakeDexWatcher is the factory method
 func MakeDexWatcher(
 	api *horizon.Client,
 	network build.Network,
+	threadTracker *multithreading.ThreadTracker,
 	booksOut chan<- *horizon.OrderBookSummary,
-	ledgerPing chan<- bool,
+	ledgerOut chan horizon.Ledger,
 	l logger.Logger) *DexWatcher {
 
 	return &DexWatcher{
-		API:        api,
-		Network:    network,
-		booksOut:   booksOut,
-		ledgerPing: ledgerPing,
-		l:          l,
+		API:           api,
+		Network:       network,
+		threadTracker: threadTracker,
+		booksOut:      booksOut,
+		ledgerOut:     ledgerOut,
+		l:             l,
 	}
 }
 
@@ -146,10 +150,16 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number, trad
 func (w *DexWatcher) StreamManager() {
 	streamTicker := time.NewTicker(50 * time.Second)
 	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
-		go w.StreamLedgers(ctx, nil, w.ledgerNotify)
+		// ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+		ctx := context.Background()
+		// w.StreamLedgers(ctx, nil, w.ledgerNotify, 1, "desc")
+		go w.API.StreamLedgers(ctx, nil, w.ledgerNotify)
 		<-streamTicker.C
-		cancel()
+		// just checking if the cancel is killing the stream early
+		// n := 0
+		// if n == 1 {
+		// 	cancel()
+		// }
 	}
 }
 
@@ -158,22 +168,53 @@ func (w *DexWatcher) StreamLedgers(
 	ctx context.Context,
 	cursor *horizon.Cursor,
 	handler horizon.LedgerHandler,
-) (err error) {
-	url := fmt.Sprintf("%s/ledgers", w.API.URL)
-	return w.stream(ctx, url, cursor, func(data []byte) error {
-		var ledger horizon.Ledger
-		e := json.Unmarshal(data, &ledger)
-		if e != nil {
-			return fmt.Errorf("error unmarshalling data: %s", e)
-		}
-		handler(ledger)
-		return nil
-	})
+	limit int,
+	order string,
+) {
+	url := fmt.Sprintf("%s/ledgers?limit=%v&order=%s", w.API.URL, limit, order)
+
+	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
+		w.stream(ctx, url, cursor, func(data []byte) error {
+			var ledger horizon.Ledger
+			e := json.Unmarshal(data, &ledger)
+			if e != nil {
+				return fmt.Errorf("error unmarshalling data: %s", e)
+			}
+			handler(ledger)
+			return nil
+		})
+	}, nil)
 }
+
+// 	go w.stream(ctx, url, cursor, func(data []byte) error {
+// 		var ledger horizon.Ledger
+// 		e := json.Unmarshal(data, &ledger)
+// 		if e != nil {
+// 			return fmt.Errorf("error unmarshalling data: %s", e)
+// 		}
+// 		handler(ledger)
+// 		return nil
+// 	})
+// 	return nil
+// }
+
+// w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
+// 	w.stream(context.Background(), url, nil, stop, func(data []byte) error {
+// 		var book *horizon.OrderBookSummary
+// 		e := json.Unmarshal(data, &book)
+// 		if e != nil {
+// 			return fmt.Errorf("error unmarshaling data: %s", e)
+// 		}
+// 		w.handleReturnedBook(book)
+// 		return nil
+// 	})
+// }, nil)
 
 // ledgerNotify just says that a ledger came in for sync purposes
 func (w *DexWatcher) ledgerNotify(ledger horizon.Ledger) {
-	w.ledgerPing <- true
+	id := ledger.ID
+	w.l.Infof("got ledger %v", id)
+	w.ledgerOut <- ledger
 }
 
 // AddTrackedBook adds a pair's orderbook to the BookTracker
@@ -255,10 +296,15 @@ func (w *DexWatcher) stream(
 	reader := bufio.NewReader(resp.Body)
 	ticker := time.NewTicker(10 * time.Millisecond)
 
+	i := 1
 	for {
 
 		<-ticker.C
-
+		i++
+		if i > 100 {
+			w.l.Info("boop")
+			i = 0
+		}
 		// Read events one by one. Break this loop when there is no more data to be
 		// read from resp.Body (io.EOF).
 	Events:
@@ -276,7 +322,7 @@ func (w *DexWatcher) stream(
 
 				line, err := reader.ReadString('\n')
 				if err != nil {
-					if err == io.EOF {
+					if err == io.EOF || err == io.ErrUnexpectedEOF {
 						if nonEmptylinesRead == 0 {
 							break Events
 						}

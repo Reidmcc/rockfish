@@ -10,6 +10,7 @@ import (
 	"github.com/interstellar/kelp/api"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/nikhilsaraf/go-tools/multithreading"
+	"github.com/stellar/go/clients/horizon"
 )
 
 // Arbitrageur is the bot struct
@@ -21,9 +22,9 @@ type Arbitrageur struct {
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
-	ledgerPing      <-chan bool
+	ledgerOut       <-chan horizon.Ledger
 	findIt          chan<- bool
-	pathReturn      <-chan modules.FindOutcome
+	pathReturn      <-chan modules.PathFindOutcome
 	l               logger.Logger
 
 	// uninitialized
@@ -39,9 +40,9 @@ func MakeArbitrageur(
 	threadTracker *multithreading.ThreadTracker,
 	fixedIterations *uint64,
 	simMode bool,
-	ledgerPing chan bool,
+	ledgerOut chan horizon.Ledger,
 	findIt chan<- bool,
-	pathReturn <-chan findOutcome,
+	pathReturn <-chan modules.PathFindOutcome,
 	l logger.Logger,
 ) *Arbitrageur {
 	return &Arbitrageur{
@@ -52,7 +53,7 @@ func MakeArbitrageur(
 		threadTracker:   threadTracker,
 		fixedIterations: fixedIterations,
 		simMode:         simMode,
-		ledgerPing:      ledgerPing,
+		ledgerOut:       ledgerOut,
 		findIt:          findIt,
 		pathReturn:      pathReturn,
 		l:               l,
@@ -61,17 +62,18 @@ func MakeArbitrageur(
 
 // StartLedgerSynced starts in ledger-synced mode
 func (a *Arbitrageur) StartLedgerSynced() {
-	go a.DexAgent.StreamMananger()
+	go a.DexWatcher.StreamManager()
+	// go a.DexWatcher.AddTrackedBook(a.PathFinder.PathList[0].PathSequence[0].Pair, "20", make(chan bool))
 
 	for {
 		go a.PathFinder.FindBestPathConcurrent()
 
-		<-a.ledgerPing
+		<-a.ledgerOut
 		a.findIt <- true
 
 		r := <-a.pathReturn
 		if r.MetThreshold {
-			a.DexAgent.SendPaymentCycle(r.P)
+			a.DexAgent.SendPaymentCycle(r.BestPath, r.MaxAmount)
 		}
 	}
 
