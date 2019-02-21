@@ -153,7 +153,7 @@ func (w *DexWatcher) StreamManager() {
 		// ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
 		ctx := context.Background()
 		// w.StreamLedgers(ctx, nil, w.ledgerNotify, 1, "desc")
-		go w.API.StreamLedgers(ctx, nil, w.ledgerNotify)
+		go w.StreamLedgers(ctx, nil, w.ledgerNotify, 1, "asc")
 		<-streamTicker.C
 		// just checking if the cancel is killing the stream early
 		// n := 0
@@ -171,10 +171,10 @@ func (w *DexWatcher) StreamLedgers(
 	limit int,
 	order string,
 ) {
-	url := fmt.Sprintf("%s/ledgers?limit=%v&order=%s", w.API.URL, limit, order)
+	url := fmt.Sprintf("%s/ledgers?limit=%v&order=%s", strings.TrimRight(w.API.URL, "/"), limit, order)
 
 	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-		w.stream(ctx, url, cursor, func(data []byte) error {
+		w.streamOld(ctx, url, cursor, make(chan bool), func(data []byte) error {
 			var ledger horizon.Ledger
 			e := json.Unmarshal(data, &ledger)
 			if e != nil {
@@ -239,15 +239,17 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan 
 
 	url := s.String()
 
-	go w.stream(context.Background(), url, nil, func(data []byte) error {
-		var book *horizon.OrderBookSummary
-		e := json.Unmarshal(data, &book)
-		if e != nil {
-			return fmt.Errorf("error unmarshaling data: %s", e)
-		}
-		w.handleReturnedBook(book)
-		return nil
-	})
+	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
+		w.streamOld(context.Background(), url, nil, stop, func(data []byte) error {
+			var book *horizon.OrderBookSummary
+			e := json.Unmarshal(data, &book)
+			if e != nil {
+				return fmt.Errorf("error unmarshaling data: %s", e)
+			}
+			w.handleReturnedBook(book)
+			return nil
+		})
+	}, nil)
 
 	return nil
 }
@@ -259,13 +261,14 @@ func (w *DexWatcher) handleReturnedBook(book *horizon.OrderBookSummary) {
 	w.booksOut <- book
 }
 
-// this is adapted from the stream function from horizon.client
-func (w *DexWatcher) stream(
+func (w *DexWatcher) streamOld(
 	ctx context.Context,
 	baseURL string,
 	cursor *horizon.Cursor,
+	stop <-chan bool,
 	handler func(data []byte) error,
 ) error {
+	// inboundStream := make(chan *http.Response)
 	query := url.Values{}
 	if cursor != nil {
 		query.Set("cursor", string(*cursor))
@@ -279,6 +282,9 @@ func (w *DexWatcher) stream(
 	if cursor != nil {
 		baseURL = fmt.Sprintf("%s?%s", baseURL, query.Encode())
 	}
+	// whoa, got stuck in a loop spamming Horizon!
+
+	w.l.Infof("Submitting url: %s", baseURL)
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s", baseURL), nil)
 	if err != nil {
@@ -296,19 +302,24 @@ func (w *DexWatcher) stream(
 	reader := bufio.NewReader(resp.Body)
 	ticker := time.NewTicker(10 * time.Millisecond)
 
-	i := 1
 	for {
-
-		<-ticker.C
-		i++
-		if i > 100 {
-			w.l.Info("boop")
-			i = 0
+		// time.Sleep(10 * time.Millisecond)
+		select {
+		case <-stop:
+			w.l.Info("I stopped!")
+			return nil
+		case <-ticker.C:
 		}
+		// w.l.Info("ya")
 		// Read events one by one. Break this loop when there is no more data to be
 		// read from resp.Body (io.EOF).
 	Events:
 		for {
+			// Read until empty line = event delimiter. The perfect solution would be to read
+			// as many bytes as possible and forward them to sse.Decode. However this
+			// requires much more complicated code.
+			// We could also write our own `sse` package that works fine with streams directly
+			// (github.com/manucorporat/sse is just using io/ioutils.ReadAll).
 			var buffer bytes.Buffer
 			nonEmptylinesRead := 0
 			for {
@@ -322,7 +333,12 @@ func (w *DexWatcher) stream(
 
 				line, err := reader.ReadString('\n')
 				if err != nil {
-					if err == io.EOF || err == io.ErrUnexpectedEOF {
+					if err == io.EOF {
+						// Currently Horizon appends a new line after the last event so this is not really
+						// needed. We have this code here in case this behaviour is changed in a future.
+						// From spec:
+						// > Once the end of the file is reached, the user agent must dispatch the
+						// > event one final time, as defined below.
 						if nonEmptylinesRead == 0 {
 							break Events
 						}
@@ -345,6 +361,8 @@ func (w *DexWatcher) stream(
 				return err
 			}
 
+			// Right now len(events) should always be 1. This loop will be helpful after writing
+			// new SSE decoder that can handle io.Reader without using ioutils.ReadAll().
 			for _, event := range events {
 				if event.Event != "message" {
 					continue
@@ -368,5 +386,5 @@ func (w *DexWatcher) stream(
 				}
 			}
 		}
-	}
+	} //return fmt.Errorf("reached end of streaming func")
 }
