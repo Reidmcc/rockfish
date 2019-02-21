@@ -407,76 +407,11 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 		maxCycleAmount = lastMaxReceive
 	}
 
-	p.l.Infof("Path %s -> %s - > %s -> %s had return ratio of %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat())
+	// p.l.Infof("Path %s -> %s - > %s -> %s had return ratio of %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat())
+	p.l.Infof("Return ratio | Cycle amount for path %s -> %s - > %s -> %s was %v | %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), maxCycleAmount.AsFloat())
 
 	return ratio, maxCycleAmount, nil
 }
-
-// calculatePathValues returns the path's best ratio and max amount at that ratio
-// func (p *PathFinder) calculatePathValuesWithBookCall(path *PaymentPath) (*model.Number, *model.Number, error) {
-
-// 	// first pair is selling the hold asset for asset A
-// 	firstPairTopBidPrice, firstPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.FirstPair)
-// 	if e != nil {
-// 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
-// 	}
-// 	if firstPairTopBidPrice == model.NumberConstants.Zero || firstPairTopBidAmount == model.NumberConstants.Zero {
-// 		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
-// 	}
-
-// 	// mid pair is selling asset A for asset B
-// 	midPairTopBidPrice, midPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.MidPair)
-// 	if e != nil {
-// 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
-// 	}
-// 	if midPairTopBidPrice == model.NumberConstants.Zero || midPairTopBidAmount == model.NumberConstants.Zero {
-// 		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
-// 	}
-
-// 	// last pair is selling asset B for the hold asset
-// 	lastPairTopBidPrice, lastPairTopBidAmount, e := p.dexWatcher.GetTopBid(path.LastPair)
-// 	if e != nil {
-// 		return nil, nil, fmt.Errorf("Error while calculating path ratio %s", e)
-// 	}
-// 	if lastPairTopBidPrice == model.NumberConstants.Zero || lastPairTopBidAmount == model.NumberConstants.Zero {
-// 		return model.NumberConstants.Zero, model.NumberConstants.Zero, nil
-// 	}
-
-// 	// initialize as zero to prevent nil pointers; shouldn't be necessary with above returns, but safer
-// 	ratio := model.NumberConstants.Zero
-
-// 	ratio = firstPairTopBidPrice.Multiply(*midPairTopBidPrice)
-// 	ratio = ratio.Multiply(*lastPairTopBidPrice)
-
-// 	// max input is just firstPairTopBidAmount
-// 	maxCycleAmount := firstPairTopBidAmount
-
-// 	//get lower of AssetA amounts
-// 	maxAreceive := firstPairTopBidAmount.Multiply(*firstPairTopBidPrice)
-// 	maxAsell := midPairTopBidAmount
-
-// 	if maxAreceive.AsFloat() < maxAsell.AsFloat() {
-// 		maxAsell = maxAreceive
-// 	}
-
-// 	// now get lower of AssetB amounts
-// 	// the most of AssetB you can get is the top bid of the mid pair*mid pair price
-// 	maxBreceive := maxAsell.Multiply(*midPairTopBidPrice)
-// 	maxBsell := lastPairTopBidAmount
-
-// 	if maxBreceive.AsFloat() < maxBsell.AsFloat() {
-// 		maxBsell = maxBreceive
-// 	}
-
-// 	// maxLastReceive is maxBsell*last pair price
-// 	maxLastReceive := maxBsell.Multiply(*lastPairTopBidPrice)
-
-// 	if maxLastReceive.AsFloat() < maxCycleAmount.AsFloat() {
-// 		maxCycleAmount = maxLastReceive
-// 	}
-
-// 	return ratio, maxCycleAmount, nil
-// }
 
 // WhatRatio returns the minimum ratio
 func (p *PathFinder) WhatRatio() *model.Number {
