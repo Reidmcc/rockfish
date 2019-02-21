@@ -190,6 +190,7 @@ func init() {
 			threadTracker,
 			fixedIterations,
 			*simMode,
+			booksOut,
 			ledgerOut,
 			findIt,
 			pathReturn,
