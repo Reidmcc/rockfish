@@ -22,6 +22,7 @@ type Arbitrageur struct {
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
+	booksOut        <-chan *horizon.OrderBookSummary
 	ledgerOut       <-chan horizon.Ledger
 	findIt          chan<- bool
 	pathReturn      <-chan modules.PathFindOutcome
@@ -40,6 +41,7 @@ func MakeArbitrageur(
 	threadTracker *multithreading.ThreadTracker,
 	fixedIterations *uint64,
 	simMode bool,
+	booksOut chan *horizon.OrderBookSummary,
 	ledgerOut chan horizon.Ledger,
 	findIt chan<- bool,
 	pathReturn <-chan modules.PathFindOutcome,
@@ -53,6 +55,7 @@ func MakeArbitrageur(
 		threadTracker:   threadTracker,
 		fixedIterations: fixedIterations,
 		simMode:         simMode,
+		booksOut:        booksOut,
 		ledgerOut:       ledgerOut,
 		findIt:          findIt,
 		pathReturn:      pathReturn,
@@ -62,18 +65,31 @@ func MakeArbitrageur(
 
 // StartLedgerSynced starts in ledger-synced mode
 func (a *Arbitrageur) StartLedgerSynced() {
-	go a.DexWatcher.StreamManager()
-	// go a.DexWatcher.AddTrackedBook(a.PathFinder.PathList[0].PathSequence[0].Pair, "20", make(chan bool))
+	// go a.DexWatcher.StreamManager()
+	for i := 0; i < len(a.PathFinder.PathList); i++ {
+		go a.DexWatcher.AddTrackedBook(a.PathFinder.PathList[i].PathSequence[0].Pair, "20", make(chan bool))
+	}
+	shouldDelay := false
+	go func() {
+		delayticker := time.NewTicker(3 * time.Second)
+		for {
+			<-delayticker.C
+			shouldDelay = false
+			a.l.Info("delay done")
+		}
+	}()
 
 	for {
 		go a.PathFinder.FindBestPathConcurrent()
+		<-a.booksOut
+		if !shouldDelay {
+			a.findIt <- true
+			shouldDelay = true
 
-		<-a.ledgerOut
-		a.findIt <- true
-
-		r := <-a.pathReturn
-		if r.MetThreshold {
-			a.DexAgent.SendPaymentCycle(r.BestPath, r.MaxAmount)
+			r := <-a.pathReturn
+			if r.MetThreshold {
+				a.DexAgent.SendPaymentCycle(r.BestPath, r.MaxAmount)
+			}
 		}
 	}
 
