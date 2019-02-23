@@ -24,6 +24,10 @@ Either grab one of the releases, or you can compile from source, see below. Term
 5. Run Rockfish's `build.sh` from the main Rockfish repo directory `./scripts/build.sh`
 6. You should now have a `bin` folder in your repository with an executable: `rockfish`
 
+#### A note about network congestion
+
+We are committed to using the Stellar network in a way that is conscientious towards other network users. There has been some concern about arbitrage bots congesting the Stellar network by spamming path payments, which is a blunt way of trying to perform arbitrage. Rockfish only submits a transaction when it sees an actual profit opportunity; at maximum one transaction per ledger if there were profits available all the time.
+
 #### Acknowledgments
 
 Rockfish uses many [Kelp](https://github.com/interstellar/kelp) components and would not be possible without them. Real rockfish live in [kelp forests](https://en.wikipedia.org/wiki/Kelp_forest); hence the name.
