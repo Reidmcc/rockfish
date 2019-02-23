@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -39,6 +40,13 @@ type DexAgent struct {
 	seqNum       uint64
 	reloadSeqNum bool
 	baseAmount   *model.Number
+	transMutex   sync.Mutex
+}
+
+// TransData contains the data needed to contruct a path payment
+type TransData struct {
+	Path   *PaymentPath
+	Amount *model.Number
 }
 
 // MakeDexAgent is the factory method
@@ -58,8 +66,6 @@ func MakeDexAgent(
 	simMode bool,
 	l logger.Logger,
 ) *DexAgent {
-	//convertRatio := model.NumberFromFloat(minRatio, utils.SdexPrecision)
-	//convert
 	dexAgent := &DexAgent{
 		API:               api,
 		SourceSeed:        sourceSeed,
@@ -162,13 +168,13 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		return errors.Wrap(e, "SubmitOps error: ")
 	}
 
-	dA.l.Infof("pre-XDR raw was: %s", tx)
+	// dA.l.Infof("pre-XDR raw was: %s", tx)
 	// convert to xdr string
 	txeB64, e := dA.sign(tx)
 	if e != nil {
 		return e
 	}
-	dA.l.Infof("tx XDR: %s\n", txeB64)
+	// dA.l.Infof("tx XDR: %s\n", txeB64)
 
 	// submit
 	if !dA.simMode {
@@ -302,15 +308,8 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 	convertAssetB := utils.Asset2Asset(throughAssetB)
 
 	pw := build.PayWith(convertHoldAsset, maxPayAmount)
-	// dA.l.Infof("Initial PayWith set to: %s", pw)
 	pw = pw.Through(convertAssetA)
-	// dA.l.Infof("With first Through is: %s", pw)
 	pw = pw.Through(convertAssetB)
-	// dA.l.Infof("With second Through is: %s", pw)
-
-	dA.l.Infof("raw build.PayWith set to: %s", pw)
-
-	// dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
 	if convertHoldAsset == build.NativeAsset() {
 
@@ -338,7 +337,7 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 }
 
 // SendByFoundPath executes a payment cycle for the find-path protocol
-func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, maxAmount *model.Number) error {
+func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, maxAmount *model.Number, hold chan bool, done chan bool) error {
 
 	payOp, e := dA.makePathPaymentredux(path, holdAsset, maxAmount)
 	if e != nil {

@@ -70,7 +70,7 @@ func MakePathRequester(
 }
 
 // AnalysePaths asks horizon about available paths and checks if any are profitable
-func (p *PathRequester) AnalysePaths() (*PathRecord, *model.Number, bool, error) {
+func (p *PathRequester) AnalysePaths(tradingAccount string) (*PathRecord, *model.Number, bool, error) {
 	metThreshold := false
 	var bestPath PathRecord
 	var bestCost *model.Number
@@ -104,7 +104,7 @@ func (p *PathRequester) AnalysePaths() (*PathRecord, *model.Number, bool, error)
 		// p.l.Info("")
 
 		// now find paths where the desired amount goes through
-		pathData, e := p.dexWatcher.GetPaths(currentAsset.Asset, minConvertedAmount)
+		pathData, e := p.dexWatcher.GetPaths(currentAsset.Asset, minConvertedAmount, tradingAccount)
 		if e != nil {
 			return nil, nil, false, fmt.Errorf("error while analysing paths %s", e)
 		}
@@ -217,7 +217,7 @@ func (p *PathRequester) findMaxAmount(sendPath PathRecord) (*model.Number, error
 		p.l.Infof("found path asset: %s", d)
 	}
 
-	var bidSeries []basicOrderBookLevel
+	var bidSeries []BasicOrderBookLevel
 
 	for _, r := range pathPairs {
 		topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(r)
@@ -226,7 +226,7 @@ func (p *PathRequester) findMaxAmount(sendPath PathRecord) (*model.Number, error
 		}
 		bidSeries = append(
 			bidSeries,
-			basicOrderBookLevel{
+			BasicOrderBookLevel{
 				Price:  topBidPrice,
 				Amount: topBidAmount,
 			},

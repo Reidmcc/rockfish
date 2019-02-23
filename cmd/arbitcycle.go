@@ -159,13 +159,21 @@ func init() {
 			l,
 		)
 
+		booksOut := make(chan *horizon.OrderBookSummary, 20)
+		ledgerOut := make(chan horizon.Ledger)
+		findIt := make(chan bool)
+		pathReturn := make(chan modules.PathFindOutcome)
+		refresh := make(chan bool)
+
 		dexWatcher := modules.MakeDexWatcher(
 			client,
 			utils.ParseNetwork(arbitConfig.HorizonURL),
-			arbitConfig.TradingAccount(),
+			threadTracker,
+			booksOut,
+			ledgerOut,
 			l)
 
-		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, l)
+		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, findIt, pathReturn, refresh, l)
 		if e != nil {
 			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
@@ -178,11 +186,16 @@ func init() {
 		arbitrageur := arbitrageur.MakeArbitrageur(
 			*pathFinder,
 			*dexWatcher,
-			*dexAgent,
+			dexAgent,
 			timeController,
 			threadTracker,
 			fixedIterations,
 			*simMode,
+			booksOut,
+			ledgerOut,
+			findIt,
+			pathReturn,
+			refresh,
 			l,
 		)
 
@@ -195,7 +208,7 @@ func init() {
 		}
 
 		l.Info("Starting the trader bot...")
-		arbitrageur.Start()
+		arbitrageur.StartLedgerSynced()
 	}
 }
 
