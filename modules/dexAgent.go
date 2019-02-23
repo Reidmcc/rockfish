@@ -308,15 +308,8 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 	convertAssetB := utils.Asset2Asset(throughAssetB)
 
 	pw := build.PayWith(convertHoldAsset, maxPayAmount)
-	// dA.l.Infof("Initial PayWith set to: %s", pw)
 	pw = pw.Through(convertAssetA)
-	// dA.l.Infof("With first Through is: %s", pw)
 	pw = pw.Through(convertAssetB)
-	// dA.l.Infof("With second Through is: %s", pw)
-
-	// dA.l.Infof("raw build.PayWith set to: %s", pw)
-
-	// dA.l.Infof("Set the intermediate assets to %s -> %s", throughAssetA.Code, throughAssetB.Code)
 
 	if convertHoldAsset == build.NativeAsset() {
 

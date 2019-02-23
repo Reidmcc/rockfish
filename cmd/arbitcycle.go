@@ -159,10 +159,11 @@ func init() {
 			l,
 		)
 
-		booksOut := make(chan *horizon.OrderBookSummary, 100)
+		booksOut := make(chan *horizon.OrderBookSummary, 20)
 		ledgerOut := make(chan horizon.Ledger)
 		findIt := make(chan bool)
 		pathReturn := make(chan modules.PathFindOutcome)
+		refresh := make(chan bool)
 
 		dexWatcher := modules.MakeDexWatcher(
 			client,
@@ -172,7 +173,7 @@ func init() {
 			ledgerOut,
 			l)
 
-		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, findIt, pathReturn, l)
+		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, findIt, pathReturn, refresh, l)
 		if e != nil {
 			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
@@ -194,6 +195,7 @@ func init() {
 			ledgerOut,
 			findIt,
 			pathReturn,
+			refresh,
 			l,
 		)
 

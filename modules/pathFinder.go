@@ -36,6 +36,7 @@ type PathFinder struct {
 	minAmount    *model.Number
 	findIt       chan bool
 	pathReturn   chan<- PathFindOutcome
+	refresh      <-chan bool
 	l            logger.Logger
 
 	//unintialized
@@ -53,6 +54,7 @@ func MakePathFinder(
 	stratConfig ArbitCycleConfig,
 	findIt chan bool,
 	pathReturn chan<- PathFindOutcome,
+	refresh <-chan bool,
 	l logger.Logger,
 ) (*PathFinder, error) {
 	holdAsset := ParseAsset(stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
@@ -129,6 +131,7 @@ func MakePathFinder(
 		minAmount:       model.NumberFromFloat(stratConfig.MinAmount, utils.SdexPrecision),
 		findIt:          findIt,
 		pathReturn:      pathReturn,
+		refresh:         refresh,
 		l:               l,
 		endAssetDisplay: endAssetDisplay,
 	}, nil
@@ -167,6 +170,25 @@ type BasicOrderBookLevel struct {
 	Amount *model.Number
 }
 
+type pathResult struct {
+	Path   *PaymentPath
+	Ratio  *model.Number
+	Amount *model.Number
+}
+
+type bidResult struct {
+	PathID int
+	Price  *model.Number
+	Amount *model.Number
+}
+
+// PathFindOutcome sends the outcome of the find-best-path
+type PathFindOutcome struct {
+	BestPath     *PaymentPath
+	MaxAmount    *model.Number
+	MetThreshold bool
+}
+
 // String impl.
 func (c ArbitCycleConfig) String() string {
 	return utils.StructString(c, nil)
@@ -180,7 +202,7 @@ func makePaymentPath(
 	pairBook map[int]TradingPair) (*PaymentPath, error) {
 	var pathSequence []PathPair
 
-	// find the pairs from the book and whether they should be inverted
+	// find the pairs from the book
 	for id, b := range pairBook {
 		if holdAsset == b.Base && assetA == b.Quote {
 			path := PathPair{PairID: id, Pair: b}
@@ -205,12 +227,6 @@ func makePaymentPath(
 		}
 	}
 
-	// fmt.Println("")
-	// fmt.Printf("holdAsset = %v\n", holdAsset)
-	// fmt.Printf("assetA = %v\n", assetA)
-	// fmt.Printf("assetB = %v\n", assetB)
-	// fmt.Printf("pathSequence generated at %v\n", pathSequence)
-
 	if len(pathSequence) != 3 {
 		return nil, fmt.Errorf("can't find the trading pairs for a path; abort")
 	}
@@ -223,25 +239,6 @@ func makePaymentPath(
 	}, nil
 }
 
-type pathResult struct {
-	Path   *PaymentPath
-	Ratio  *model.Number
-	Amount *model.Number
-}
-
-type bidResult struct {
-	PathID int
-	Price  *model.Number
-	Amount *model.Number
-}
-
-// PathFindOutcome sends the outcome of the find-best-path
-type PathFindOutcome struct {
-	BestPath     *PaymentPath
-	MaxAmount    *model.Number
-	MetThreshold bool
-}
-
 // FindBestPathConcurrent determines and returns the most profitable payment path with goroutines
 func (p *PathFinder) FindBestPathConcurrent() {
 	bestRatio := model.NumberConstants.Zero
@@ -252,108 +249,93 @@ func (p *PathFinder) FindBestPathConcurrent() {
 	var pathSet []pathResult
 	pathResults := make(chan pathResult, len(p.PathList))
 	bidResults := make(chan bidResult, len(p.PairBook))
-
-	<-p.findIt
-
-	go func() {
-		for {
-			b, more := <-bidResults
-			bidSet = append(bidSet, b)
-			if !more {
-				return
-			}
-
-		}
-		// }
-	}()
-
 	var wgOne sync.WaitGroup
-
-	// wgCount := 0
-	for id, b := range p.PairBook {
-		wgOne.Add(1)
-		// wgCount++
-		// p.l.Infof("wgOne routines: %v", wgCount)
-		go func(id int, pair TradingPair) {
-			defer wgOne.Done()
-			topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(pair)
-			if e != nil {
-				p.l.Errorf("Error getting orderbook %s", e)
-				return
-			}
-			bidResults <- bidResult{PathID: id, Price: topBidPrice, Amount: topBidAmount}
-			// p.l.Infof("returned a bid result for pair %v: %v|%v", id, pair.Base, pair.Quote)
-		}(id, b)
-		// break
-	}
-
-	wgOne.Wait()
-	// let the append finish happening
-	time.Sleep(time.Millisecond)
-	close(bidResults)
-	// for i := 0; i < len(p.PairBook); i++ {
-	// 	time.Sleep(100 * time.Millisecond)
-	// 	p.l.Infof("Have %v records in bidSet", len(bidSet))
-	// }
-
-	p.l.Infof("got %v bid records from input of %v pairs", len(bidSet), len(p.PairBook))
-
-	go func() {
-		for {
-			r, more := <-pathResults
-			pathSet = append(pathSet, r)
-			if !more {
-				return
-			}
-		}
-	}()
-
 	var wgTwo sync.WaitGroup
 
-	for i := 0; i < len(p.PathList); i++ {
-		wgTwo.Add(1)
-		go func(path *PaymentPath, bids []bidResult) {
-			defer wgTwo.Done()
-			ratio, amount, e := p.calculatePathValues(path, bids)
-			if e != nil {
-				p.l.Errorf("error while calculating ratios: %s", e)
-				return
+	select {
+	case <-p.refresh:
+		return
+	case <-p.findIt:
+
+		go func() {
+			for {
+				b, more := <-bidResults
+				bidSet = append(bidSet, b)
+				if !more {
+					return
+				}
+
 			}
-			pathResults <- pathResult{Path: path, Ratio: ratio, Amount: amount}
-		}(p.PathList[i], bidSet)
-		// break
-	}
+		}()
 
-	wgTwo.Wait()
-	time.Sleep(time.Millisecond)
-	close(pathResults)
-
-	for _, r := range pathSet {
-		if r.Ratio.AsFloat() > bestRatio.AsFloat() {
-			bestRatio = r.Ratio
-			maxAmount = r.Amount
-			bestPath = r.Path
+		for id, b := range p.PairBook {
+			wgOne.Add(1)
+			go func(id int, pair TradingPair) {
+				defer wgOne.Done()
+				topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(pair)
+				if e != nil {
+					p.l.Errorf("Error getting orderbook %s", e)
+					return
+				}
+				bidResults <- bidResult{PathID: id, Price: topBidPrice, Amount: topBidAmount}
+			}(id, b)
 		}
-	}
 
-	if bestRatio.AsFloat() >= p.minRatio.AsFloat() && maxAmount.AsFloat() >= p.minAmount.AsFloat() {
-		metThreshold = true
-		p.l.Info("")
-		p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
-		p.l.Info("")
-	}
-	p.l.Infof("Best path was %s -> %s - > %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
-	p.l.Info("")
+		wgOne.Wait()
+		// let the append finish happening
+		time.Sleep(time.Millisecond)
+		close(bidResults)
 
-	p.pathReturn <- PathFindOutcome{BestPath: bestPath, MaxAmount: maxAmount, MetThreshold: metThreshold}
+		go func() {
+			for {
+				r, more := <-pathResults
+				pathSet = append(pathSet, r)
+				if !more {
+					return
+				}
+			}
+		}()
+
+		for i := 0; i < len(p.PathList); i++ {
+			wgTwo.Add(1)
+			go func(path *PaymentPath, bids []bidResult) {
+				defer wgTwo.Done()
+				ratio, amount, e := p.calculatePathValues(path, bids)
+				if e != nil {
+					p.l.Errorf("error while calculating ratios: %s", e)
+					return
+				}
+				pathResults <- pathResult{Path: path, Ratio: ratio, Amount: amount}
+			}(p.PathList[i], bidSet)
+		}
+
+		wgTwo.Wait()
+		time.Sleep(time.Millisecond)
+		close(pathResults)
+
+		for _, r := range pathSet {
+			if r.Ratio.AsFloat() > bestRatio.AsFloat() {
+				bestRatio = r.Ratio
+				maxAmount = r.Amount
+				bestPath = r.Path
+			}
+		}
+
+		if bestRatio.AsFloat() >= p.minRatio.AsFloat() && maxAmount.AsFloat() >= p.minAmount.AsFloat() {
+			metThreshold = true
+			p.l.Info("")
+			p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
+			p.l.Info("")
+		}
+		p.l.Infof("Best path was %s -> %s -> %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
+		p.l.Info("")
+
+		p.pathReturn <- PathFindOutcome{BestPath: bestPath, MaxAmount: maxAmount, MetThreshold: metThreshold}
+	}
 }
 
 func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*model.Number, *model.Number, error) {
 	var pathBids []bidResult
-
-	// for i, r := range path.PathSequence {
-	// 	p.l.Infof("Path %v: %v\n", i, r)
-	// }
 
 	for i := 0; i < len(path.PathSequence); i++ {
 		for _, r := range bids {
@@ -363,10 +345,6 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 			}
 		}
 	}
-
-	// for i, r := range pathBids {
-	// 	p.l.Infof("Bid %v: %v\n", i, r)
-	// }
 
 	if len(pathBids) != len(path.PathSequence) {
 		return nil, nil, fmt.Errorf("couldn't match bids (len%v) with path sequence len(%v)", len(pathBids), len(path.PathSequence))
@@ -381,7 +359,6 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 	maxCycleAmount := pathBids[0].Amount
 
 	// get lower of AssetA amounts
-	// this isn't part of the loop because it's never reduced by a previous step
 	maxAreceive := pathBids[0].Amount.Multiply(*pathBids[0].Price)
 	maxAsell := pathBids[1].Amount
 
@@ -389,26 +366,27 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 		maxAsell = maxAreceive
 	}
 
-	lastMaxReceive := maxAsell
-	// now get lower of AssetB amounts (now looped for all mid assets)
+	maxBreceive := maxAsell.Multiply(*pathBids[1].Price)
+	maxBsell := pathBids[2].Amount
 
-	for i := 2; i < len(path.PathSequence)-1; i++ {
-		maxReceive := lastMaxReceive.Multiply(*pathBids[i-1].Price)
-		maxSell := pathBids[i].Amount
-
-		if maxReceive.AsFloat() < maxSell.AsFloat() {
-			maxSell = maxReceive
-
-			lastMaxReceive = maxSell
-		}
+	if maxBreceive.AsFloat() < maxBsell.AsFloat() {
+		maxBsell = maxBreceive
 	}
 
-	if lastMaxReceive.AsFloat() < maxCycleAmount.AsFloat() {
-		maxCycleAmount = lastMaxReceive
+	// maxLastReceive is maxBsell*last pair price
+	maxLastReceive := maxBsell.Multiply(*pathBids[2].Price)
+
+	if maxLastReceive.AsFloat() < maxCycleAmount.AsFloat() {
+		maxCycleAmount = maxLastReceive
+	}
+
+	ratioDisplay := ratio.AsString()
+	if ratio.AsFloat() == 0.0 {
+		ratioDisplay = "route empty"
 	}
 
 	// p.l.Infof("Path %s -> %s - > %s -> %s had return ratio of %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat())
-	p.l.Infof("Return ratio | Cycle amount for path %s -> %s - > %s -> %s was %v | %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat(), maxCycleAmount.AsFloat())
+	p.l.Infof("Return ratio | Cycle amount for path %s -> %s -> %s -> %s was %s | %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratioDisplay, maxCycleAmount.AsFloat())
 
 	return ratio, maxCycleAmount, nil
 }

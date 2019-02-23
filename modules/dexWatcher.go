@@ -146,20 +146,17 @@ func (w *DexWatcher) GetPaths(endAsset horizon.Asset, amount *model.Number, trad
 	return &paths, nil
 }
 
-// StreamManager just refreshes the ledger streams as they expire; horizon closes them after 55 seconds on its own
-func (w *DexWatcher) StreamManager() {
+// StreamManager just refreshes the streams as they expire; horizon closes them after 55 seconds on its own
+func (w *DexWatcher) StreamManager(pairList []TradingPair) {
 	streamTicker := time.NewTicker(50 * time.Second)
+
 	for {
-		// ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
-		ctx := context.Background()
-		// w.StreamLedgers(ctx, nil, w.ledgerNotify, 1, "desc")
-		go w.StreamLedgers(ctx, nil, w.ledgerNotify, 1, "asc")
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+		for _, b := range pairList {
+			go w.AddTrackedBook(ctx, b, "20")
+		}
 		<-streamTicker.C
-		// just checking if the cancel is killing the stream early
-		// n := 0
-		// if n == 1 {
-		// 	cancel()
-		// }
+		cancel()
 	}
 }
 
@@ -174,7 +171,7 @@ func (w *DexWatcher) StreamLedgers(
 	url := fmt.Sprintf("%s/ledgers?limit=%v&order=%s", strings.TrimRight(w.API.URL, "/"), limit, order)
 
 	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-		w.streamOld(ctx, url, cursor, make(chan bool), func(data []byte) error {
+		w.streamOld(ctx, url, cursor, func(data []byte) error {
 			var ledger horizon.Ledger
 			e := json.Unmarshal(data, &ledger)
 			if e != nil {
@@ -186,30 +183,6 @@ func (w *DexWatcher) StreamLedgers(
 	}, nil)
 }
 
-// 	go w.stream(ctx, url, cursor, func(data []byte) error {
-// 		var ledger horizon.Ledger
-// 		e := json.Unmarshal(data, &ledger)
-// 		if e != nil {
-// 			return fmt.Errorf("error unmarshalling data: %s", e)
-// 		}
-// 		handler(ledger)
-// 		return nil
-// 	})
-// 	return nil
-// }
-
-// w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-// 	w.stream(context.Background(), url, nil, stop, func(data []byte) error {
-// 		var book *horizon.OrderBookSummary
-// 		e := json.Unmarshal(data, &book)
-// 		if e != nil {
-// 			return fmt.Errorf("error unmarshaling data: %s", e)
-// 		}
-// 		w.handleReturnedBook(book)
-// 		return nil
-// 	})
-// }, nil)
-
 // ledgerNotify just says that a ledger came in for sync purposes
 func (w *DexWatcher) ledgerNotify(ledger horizon.Ledger) {
 	id := ledger.ID
@@ -218,13 +191,17 @@ func (w *DexWatcher) ledgerNotify(ledger horizon.Ledger) {
 }
 
 // AddTrackedBook adds a pair's orderbook to the BookTracker
-func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan bool) error {
+func (w *DexWatcher) AddTrackedBook(ctx context.Context, pair TradingPair, limit string) error {
 	quoteCodeDisplay := pair.Quote.Code
 	if pair.Quote.Type == "native" {
 		quoteCodeDisplay = "XLM"
 	}
+	baseCodeDisplay := pair.Quote.Code
+	if pair.Base.Type == "native" {
+		baseCodeDisplay = "XLM"
+	}
 
-	w.l.Infof("Adding stream for %s|%s vs %s|%s", pair.Base.Code, pair.Base.Issuer, quoteCodeDisplay, pair.Quote.Issuer)
+	w.l.Infof("(re)starting stream for %s|%s vs %s|%s", baseCodeDisplay, pair.Base.Issuer, quoteCodeDisplay, pair.Quote.Issuer)
 
 	var s strings.Builder
 	s.WriteString(fmt.Sprintf(strings.TrimRight(w.API.URL, "/")))
@@ -240,7 +217,7 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan 
 	url := s.String()
 
 	w.threadTracker.TriggerGoroutine(func(inputs []interface{}) {
-		w.streamOld(context.Background(), url, nil, stop, func(data []byte) error {
+		w.streamOld(ctx, url, nil, func(data []byte) error {
 			var book *horizon.OrderBookSummary
 			e := json.Unmarshal(data, &book)
 			if e != nil {
@@ -255,9 +232,17 @@ func (w *DexWatcher) AddTrackedBook(pair TradingPair, limit string, stop <-chan 
 }
 
 func (w *DexWatcher) handleReturnedBook(book *horizon.OrderBookSummary) {
-	quoteCodeDisplay := book.Buying.Code
+	sellCodeDisplay := book.Selling.Code
+	buyCodeDisplay := book.Buying.Code
 
-	w.l.Infof("orderbook for %s|%s vs %s|%s updated, checking relevant paths", book.Selling.Code, book.Selling.Issuer, quoteCodeDisplay, book.Buying.Issuer)
+	if utils.Asset2Asset(book.Selling) == build.NativeAsset() {
+		sellCodeDisplay = "XLM"
+	}
+	if utils.Asset2Asset(book.Buying) == build.NativeAsset() {
+		buyCodeDisplay = "XLM"
+	}
+
+	w.l.Infof("orderbook for %s|%s vs %s|%s updated", sellCodeDisplay, book.Selling.Issuer, buyCodeDisplay, book.Buying.Issuer)
 	w.booksOut <- book
 }
 
@@ -265,10 +250,8 @@ func (w *DexWatcher) streamOld(
 	ctx context.Context,
 	baseURL string,
 	cursor *horizon.Cursor,
-	stop <-chan bool,
 	handler func(data []byte) error,
 ) error {
-	// inboundStream := make(chan *http.Response)
 	query := url.Values{}
 	if cursor != nil {
 		query.Set("cursor", string(*cursor))
@@ -276,15 +259,9 @@ func (w *DexWatcher) streamOld(
 
 	client := http.Client{}
 
-	// for {
-
-	// for {
 	if cursor != nil {
 		baseURL = fmt.Sprintf("%s?%s", baseURL, query.Encode())
 	}
-	// whoa, got stuck in a loop spamming Horizon!
-
-	w.l.Infof("Submitting url: %s", baseURL)
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s", baseURL), nil)
 	if err != nil {
@@ -303,23 +280,9 @@ func (w *DexWatcher) streamOld(
 	ticker := time.NewTicker(10 * time.Millisecond)
 
 	for {
-		// time.Sleep(10 * time.Millisecond)
-		select {
-		case <-stop:
-			w.l.Info("I stopped!")
-			return nil
-		case <-ticker.C:
-		}
-		// w.l.Info("ya")
-		// Read events one by one. Break this loop when there is no more data to be
-		// read from resp.Body (io.EOF).
+		<-ticker.C
 	Events:
 		for {
-			// Read until empty line = event delimiter. The perfect solution would be to read
-			// as many bytes as possible and forward them to sse.Decode. However this
-			// requires much more complicated code.
-			// We could also write our own `sse` package that works fine with streams directly
-			// (github.com/manucorporat/sse is just using io/ioutils.ReadAll).
 			var buffer bytes.Buffer
 			nonEmptylinesRead := 0
 			for {
@@ -334,11 +297,6 @@ func (w *DexWatcher) streamOld(
 				line, err := reader.ReadString('\n')
 				if err != nil {
 					if err == io.EOF {
-						// Currently Horizon appends a new line after the last event so this is not really
-						// needed. We have this code here in case this behaviour is changed in a future.
-						// From spec:
-						// > Once the end of the file is reached, the user agent must dispatch the
-						// > event one final time, as defined below.
 						if nonEmptylinesRead == 0 {
 							break Events
 						}
@@ -361,8 +319,6 @@ func (w *DexWatcher) streamOld(
 				return err
 			}
 
-			// Right now len(events) should always be 1. This loop will be helpful after writing
-			// new SSE decoder that can handle io.Reader without using ioutils.ReadAll().
 			for _, event := range events {
 				if event.Event != "message" {
 					continue
@@ -386,5 +342,5 @@ func (w *DexWatcher) streamOld(
 				}
 			}
 		}
-	} //return fmt.Errorf("reached end of streaming func")
+	}
 }

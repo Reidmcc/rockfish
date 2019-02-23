@@ -26,6 +26,7 @@ type Arbitrageur struct {
 	ledgerOut       <-chan horizon.Ledger
 	findIt          chan<- bool
 	pathReturn      <-chan modules.PathFindOutcome
+	refresh         chan<- bool
 	l               logger.Logger
 
 	// uninitialized
@@ -45,6 +46,7 @@ func MakeArbitrageur(
 	ledgerOut chan horizon.Ledger,
 	findIt chan<- bool,
 	pathReturn <-chan modules.PathFindOutcome,
+	refresh chan<- bool,
 	l logger.Logger,
 ) *Arbitrageur {
 	return &Arbitrageur{
@@ -59,23 +61,32 @@ func MakeArbitrageur(
 		ledgerOut:       ledgerOut,
 		findIt:          findIt,
 		pathReturn:      pathReturn,
+		refresh:         refresh,
 		l:               l,
 	}
 }
 
 // StartLedgerSynced starts in ledger-synced mode
 func (a *Arbitrageur) StartLedgerSynced() {
-	// go a.DexWatcher.StreamManager()
-	for i := 0; i < len(a.PathFinder.PathList); i++ {
-		go a.DexWatcher.AddTrackedBook(a.PathFinder.PathList[i].PathSequence[0].Pair, "20", make(chan bool))
+	// we use streaming of the relevant orderbooks as a proxy for net-ledger notification pending fix for ledger streaming
+	// trim the duplicate pairs to avoid duplicate streams
+	encountered := make(map[modules.TradingPair]bool)
+	var trimmedPairBook []modules.TradingPair
+	for _, v := range a.PathFinder.PairBook {
+		if !encountered[v] && !encountered[modules.TradingPair{Base: v.Quote, Quote: v.Base}] {
+			encountered[v] = true
+			trimmedPairBook = append(trimmedPairBook, v)
+		}
 	}
+	go a.DexWatcher.StreamManager(trimmedPairBook)
+
+	// create a ticker to regulate the rate of path checking
 	shouldDelay := false
 	go func() {
-		delayticker := time.NewTicker(3 * time.Second)
+		delayticker := time.NewTicker(2 * time.Second)
 		for {
 			<-delayticker.C
 			shouldDelay = false
-			a.l.Info("delay done")
 		}
 	}()
 
@@ -83,6 +94,7 @@ func (a *Arbitrageur) StartLedgerSynced() {
 		go a.PathFinder.FindBestPathConcurrent()
 		<-a.booksOut
 		if !shouldDelay {
+
 			a.findIt <- true
 			shouldDelay = true
 
@@ -90,12 +102,13 @@ func (a *Arbitrageur) StartLedgerSynced() {
 			if r.MetThreshold {
 				a.DexAgent.SendPaymentCycle(r.BestPath, r.MaxAmount)
 			}
+		} else {
+			a.refresh <- true
 		}
 	}
-
 }
 
-// Start ...starts
+// Start ...starts the legacy method
 func (a *Arbitrageur) Start() {
 	a.l.Info("----------------------------------------------------------------------------------------------------")
 	var lastUpdateTime time.Time
@@ -139,141 +152,3 @@ func (a *Arbitrageur) blockStats() {
 	a.l.Infof("# Goroutines: %v\n", runtime.NumGoroutine())
 	// }
 }
-
-// // StartStreamMode starts in streaming mode
-// func (a *Arbitrageur) StartStreamMode() {
-// 	// make a channel to stop the streams
-// 	stop := make(chan bool, 100)
-// 	hold := make(chan bool)
-// 	done := make(chan bool)
-// 	// spawn := make(chan *modules.PaymentPath, 20)
-
-// 	// start streams
-// 	a.startServices(stop, hold, done)
-// 	// a.pathCheckSpawner(spawn, hold, done, stop)
-
-// 	// prep a ticker
-// 	ticker := time.NewTicker(10 * time.Second)
-// 	idleCounter := 0
-
-// 	for {
-// 		select {
-// 		case b := <-a.booksOut:
-// 			// a.l.Info("received a book to spawn from")
-// 			idleCounter = 0
-// 			for i := 0; i < len(a.PathFinder.PathList); i++ {
-// 				// go a.PathFinder.PathChecker(0, a.pathJobs, a.transJobs, stop)
-// 				// go a.DexAgent.TranSender(0, a.transJobs, stop, hold, done)
-
-// 				if b.Selling == a.PathFinder.PathList[i].FirstPair.Base && b.Buying == a.PathFinder.PathList[i].FirstPair.Quote {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-
-// 				if b.Selling == a.PathFinder.PathList[i].FirstPair.Quote && b.Buying == a.PathFinder.PathList[i].FirstPair.Base {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.l.Info("trying to spawn")
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-
-// 				if b.Selling == a.PathFinder.PathList[i].MidPair.Base && b.Buying == a.PathFinder.PathList[i].MidPair.Quote {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.l.Info("trying to spawn")
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-
-// 				if b.Selling == a.PathFinder.PathList[i].MidPair.Quote && b.Buying == a.PathFinder.PathList[i].MidPair.Base {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.l.Info("trying to spawn")
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-
-// 				if b.Selling == a.PathFinder.PathList[i].LastPair.Base && b.Buying == a.PathFinder.PathList[i].LastPair.Quote {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.l.Info("trying to spawn")
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-
-// 				if b.Selling == a.PathFinder.PathList[i].LastPair.Quote && b.Buying == a.PathFinder.PathList[i].LastPair.Base {
-// 					// a.l.Infof("path %v procced", a.PathFinder.PathList[i].AgentID)
-
-// 					if !a.PathFinder.PathList[i].ShouldDelay {
-// 						a.PathFinder.PathList[i].ShouldDelay = true
-// 						// a.l.Info("trying to spawn")
-// 						// a.spawnAndSend(a.PathFinder.PathList[i], stop, hold, done)
-// 						a.pathJobs <- a.PathFinder.PathList[i]
-// 					}
-// 					continue
-// 				}
-// 			}
-// 			time.Sleep(10 * time.Millisecond)
-// 		case <-hold:
-// 			<-done
-// 		case <-ticker.C:
-// 			a.l.Infof("watching, idle count = %v\n", idleCounter)
-// 			a.blockStats()
-// 			idleCounter++
-// 			if runtime.NumGoroutine() < len(a.pairBook)*3 {
-// 				a.l.Info("too few routines, restarting streams")
-// 				// if i := 0; i < len(a.pairBook) {
-// 				// 	stop <- true
-// 				// }
-// 				a.restartStreams(stop, hold, done)
-// 			}
-
-// 			if idleCounter >= 6 {
-// 				a.l.Info("we've gone 1 minute without a proc, streams may have droppped")
-// 				// if i := 0; i < len(a.pairBook) {
-// 				// 	stop <- true
-// 				// }
-// 				a.restartStreams(stop, hold, done)
-// 			}
-// 		}
-// 	}
-// }
-
-// func (a *Arbitrageur) StartBetterStreamMode() {
-
-// }
-
-// func (a *Arbitrageur) cycle() {
-// 	bestPath, maxAmount, thresholdMet, e := a.PathFinder.FindBestPath()
-// 	if e != nil {
-// 		a.l.Errorf("error while finding best path: %s", e)
-// 	}
-
-// 	if thresholdMet {
-// 		e := a.DexAgent.SendPaymentCycle(bestPath, maxAmount, hold, done)
-// 		if e != nil {
-// 			a.l.Errorf("Error while sending payment cycle %s", e)
-// 		}
-// 		return
-// 	}
-
-// 	return
-// }

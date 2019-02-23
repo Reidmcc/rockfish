@@ -1,10 +1,13 @@
 package modules
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/nikhilsaraf/go-tools/multithreading"
 
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
@@ -14,7 +17,6 @@ import (
 func TestStream(t *testing.T) {
 
 	booksOut := make(chan *horizon.OrderBookSummary, 100)
-	stop := make(chan bool)
 	ledgerPing := make(chan horizon.Ledger)
 
 	client := &horizon.Client{
@@ -23,10 +25,12 @@ func TestStream(t *testing.T) {
 	}
 
 	l := logger.MakeBasicLogger()
+	threadTracker := multithreading.MakeThreadTracker()
 
 	dexWatcher := MakeDexWatcher(
 		client,
 		utils.ParseNetwork("https://horizon.stellar.org/"),
+		threadTracker,
 		booksOut,
 		ledgerPing,
 		l)
@@ -34,7 +38,7 @@ func TestStream(t *testing.T) {
 	assetBase := ParseAsset("BTC", "GBSTRH4QOTWNSVA6E4HFERETX4ZLSR3CIUBLK7AXYII277PFJC4BBYOG")
 	assetQuote := ParseAsset("XLM", "")
 
-	dexWatcher.AddTrackedBook(TradingPair{Base: assetBase, Quote: assetQuote}, "20", stop)
+	dexWatcher.AddTrackedBook(context.Background(), TradingPair{Base: assetBase, Quote: assetQuote}, "20")
 
 	counter := 0
 	for {
