@@ -4,9 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+
+## v 0.3.0-alpha
+
+### Added
+- Implemented multithreading throughout, greatly improving speed
+- Added streaming from Horizon orderbooks to synchronize Rockfish with Stellar's ledger updates
+
 ### Changed
-- Modified payment amount determination to reduce by 2% from the maximum available in the DEX path; this is make it less likely that out-of-app rounding code cause payments to become too expensive.
+- SDEX orderbooks are now queried from Horizon once and distributed to the relevant paths, instead of calling the orderbooks during path calculations
+- The log now displays "route empty" in the place of a ratio when the path is broken by an empty orderbook, instead of displaying "0"
+- Modified payment amount determination to reduce by 2% from the maximum available in the DEX path; this is make it less likely that out-of-app rounding code cause payments to become too expensive
+- Due to multithreading the log will not always show the list of route results in the same order
+
+### Deprecated
+- `TICK_INTERVAL_SECONDS` is no longer used; replaced by stream synchronization
+- The `--iter` flag no longer has an effect due to deprecation of `TICK_INTERVAL_SECONDS`
+
 
 
 ## v 0.2.1-alpha
