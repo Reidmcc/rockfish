@@ -277,10 +277,8 @@ func (w *DexWatcher) streamOld(
 	defer resp.Body.Close()
 
 	reader := bufio.NewReader(resp.Body)
-	ticker := time.NewTicker(10 * time.Millisecond)
-
 	for {
-		<-ticker.C
+		time.Sleep(10 * time.Millisecond)
 	Events:
 		for {
 			var buffer bytes.Buffer
