@@ -4,14 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
-### Unreleased
+
+## v 0.3.2-alpha
+
+### Fixed
+- Fixed a nil reference that occured when no valid route was found
+
+## v 0.3.1-alpha
+### Fixed
 - Fixed a cpu leak from unclosed tickers in stream routines
 
 ## v 0.3.0-alpha
 
 ### Added
 - Implemented multithreading throughout, greatly improving speed
-- Added streaming from Horizon orderbooks to synchronize Rockfish with Stellar's ledger updates
+- Added streamingfrom Horizon orderbooks to synchronize Rockfish with Stellar's ledger updates
 
 ### Changed
 - SDEX orderbooks are now queried from Horizon once and distributed to the relevant paths, instead of calling the orderbooks during path calculations
