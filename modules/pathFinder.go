@@ -243,6 +243,7 @@ func makePaymentPath(
 func (p *PathFinder) FindBestPathConcurrent() {
 	bestRatio := model.NumberConstants.Zero
 	maxAmount := model.NumberConstants.Zero
+	foundAnyRoute := false
 	metThreshold := false
 	var bestPath *PaymentPath
 	var bidSet []bidResult
@@ -315,6 +316,7 @@ func (p *PathFinder) FindBestPathConcurrent() {
 
 		for _, r := range pathSet {
 			if r.Ratio.AsFloat() > bestRatio.AsFloat() {
+				foundAnyRoute = true
 				bestRatio = r.Ratio
 				maxAmount = r.Amount
 				bestPath = r.Path
@@ -327,8 +329,12 @@ func (p *PathFinder) FindBestPathConcurrent() {
 			p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
 			p.l.Info("")
 		}
-		p.l.Infof("Best path was %s -> %s -> %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
-		p.l.Info("")
+		if foundAnyRoute {
+			p.l.Infof("Best path was %s -> %s -> %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
+			p.l.Info("")
+		} else {
+			p.l.Info("No usable route found")
+		}
 
 		p.pathReturn <- PathFindOutcome{BestPath: bestPath, MaxAmount: maxAmount, MetThreshold: metThreshold}
 	}
