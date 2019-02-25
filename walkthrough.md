@@ -40,12 +40,6 @@ For trading strategies that use actual trade offers you can use a separate sourc
 
 -----------------
 
-How often you want Rockfish to check for trade oppotunities, in seconds:
-
-`TICK_INTERVAL_SECONDS=30`
-
------------------
-
 The URL for the Stellar Horizon API that Rockfish will query. The Stellar foundation's live Horizon server is at `"https://horizon.stellar.org/"`, though anyone (including you!) can run a Horizon instance. The below is a Horizon server for the Stellar test network. 
 
 `HORIZON_URL="https://horizon-testnet.stellar.org"`
