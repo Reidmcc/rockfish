@@ -66,8 +66,7 @@ func init() {
 	operationalBuffer := arbitcycleCmd.Flags().Float64("operationalBuffer", 20, "buffer of native XLM to maintain beyond minimum account balance requirement")
 	simMode := arbitcycleCmd.Flags().Bool("sim", false, "simulate the bot's actions without placing any trades")
 	logPrefix := arbitcycleCmd.Flags().StringP("log", "l", "", "log to a file (and stdout) with this prefix for the filename")
-	fixedIterations := arbitcycleCmd.Flags().Uint64("iter", 0, "only run the bot for the first N iterations (defaults value 0 runs unboundedly)")
-
+	
 	requiredFlag("botConf")
 	hiddenFlag("operationalBuffer")
 	arbitcycleCmd.Flags().SortFlags = false
@@ -75,13 +74,6 @@ func init() {
 	validateCliParams := func(l logger.Logger) {
 		if *operationalBuffer < 0 {
 			panic(fmt.Sprintf("invalid operationalBuffer argument, must be non-negative: %f", *operationalBuffer))
-		}
-
-		if *fixedIterations == 0 {
-			fixedIterations = nil
-			l.Info("will run unbounded iterations")
-		} else {
-			l.Infof("will run only %d update iterations\n", *fixedIterations)
 		}
 	}
 
@@ -182,7 +174,6 @@ func init() {
 			*dexWatcher,
 			dexAgent,
 			threadTracker,
-			fixedIterations,
 			*simMode,
 			booksOut,
 			ledgerOut,
