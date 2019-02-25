@@ -136,9 +136,6 @@ func (a *Arbitrageur) Start() {
 			a.l.Info("----------------------------------------------------------------------------------------------------")
 			lastUpdateTime = currentUpdateTime
 		}
-
-		a.l.Infof("sleeping for %s...\n", sleepTime)
-		time.Sleep(sleepTime)
 	}
 }
 
