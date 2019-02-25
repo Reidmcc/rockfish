@@ -10,7 +10,6 @@ import (
 type ArbitConfig struct {
 	TradingSecretSeed   string `valid:"-" toml:"TRADING_SECRET_SEED"`
 	SourceSecretSeed    string `valid:"-" toml:"SOURCE_SECRET_SEED"`
-	TickIntervalSeconds int32  `valid:"-" toml:"TICK_INTERVAL_SECONDS"`
 	HorizonURL          string `valid:"-" toml:"HORIZON_URL"`
 
 	tradingAccount *string
