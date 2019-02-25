@@ -102,8 +102,6 @@ Other optional flags are available:
 
 `--log filename`, which sets Rockfish to output its log to a file in its directory; no need for an extension.
 
-`--iter 1`, which tells Rockfish to run only a specific number to query cycles instead of continuing until stopped.
-
 `--operationalBuffer 15`, which sets how much of an XLM balance to maintain to keep the account valid. This is set to 20 if the flag is not specified.
 
 ### Monitor the ratios and cycle attempts to see if you've chosen effective asset groups. 
