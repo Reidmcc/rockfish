@@ -178,16 +178,10 @@ func init() {
 			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
 
-		timeController := plugins.MakeIntervalTimeController(
-			time.Duration(arbitConfig.TickIntervalSeconds)*time.Second,
-			0,
-		)
-
 		arbitrageur := arbitrageur.MakeArbitrageur(
 			*pathFinder,
 			*dexWatcher,
 			dexAgent,
-			timeController,
 			threadTracker,
 			fixedIterations,
 			*simMode,
