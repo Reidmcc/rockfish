@@ -18,7 +18,6 @@ type Arbitrageur struct {
 	PathFinder      modules.PathFinder
 	DexWatcher      modules.DexWatcher
 	DexAgent        *modules.DexAgent
-	timeController  api.TimeController
 	threadTracker   *multithreading.ThreadTracker
 	fixedIterations *uint64
 	simMode         bool
@@ -38,7 +37,6 @@ func MakeArbitrageur(
 	pathFinder modules.PathFinder,
 	dexWatcher modules.DexWatcher,
 	dexAgent *modules.DexAgent,
-	timeController api.TimeController,
 	threadTracker *multithreading.ThreadTracker,
 	fixedIterations *uint64,
 	simMode bool,
@@ -53,7 +51,6 @@ func MakeArbitrageur(
 		PathFinder:      pathFinder,
 		DexWatcher:      dexWatcher,
 		DexAgent:        dexAgent,
-		timeController:  timeController,
 		threadTracker:   threadTracker,
 		fixedIterations: fixedIterations,
 		simMode:         simMode,
