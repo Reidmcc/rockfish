@@ -117,7 +117,7 @@ func (a *Arbitrageur) Start() {
 			a.l.Errorf("Error while checking pre-cycle hold balance: %s", e)
 		}
 		a.l.Infof("Going into the cycle %s balance was %v", a.endAssetDisplay, curBalance)
-		if lastUpdateTime.IsZero() || a.timeController.ShouldUpdate(lastUpdateTime, currentUpdateTime) {
+		if lastUpdateTime.IsZero() {
 
 			// a.cycle()
 
@@ -137,7 +137,6 @@ func (a *Arbitrageur) Start() {
 			lastUpdateTime = currentUpdateTime
 		}
 
-		sleepTime := a.timeController.SleepTime(lastUpdateTime, currentUpdateTime)
 		a.l.Infof("sleeping for %s...\n", sleepTime)
 		time.Sleep(sleepTime)
 	}
