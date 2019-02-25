@@ -104,40 +104,6 @@ func (a *Arbitrageur) StartLedgerSynced() {
 	}
 }
 
-// Start ...starts the legacy method
-func (a *Arbitrageur) Start() {
-	a.l.Info("----------------------------------------------------------------------------------------------------")
-	var lastUpdateTime time.Time
-
-	for {
-		currentUpdateTime := time.Now()
-		curBalance, e := a.DexAgent.JustAssetBalance(a.PathFinder.HoldAsset)
-		if e != nil {
-			a.l.Errorf("Error while checking pre-cycle hold balance: %s", e)
-		}
-		a.l.Infof("Going into the cycle %s balance was %v", a.endAssetDisplay, curBalance)
-		if lastUpdateTime.IsZero() {
-
-			// a.cycle()
-
-			if a.fixedIterations != nil {
-				*a.fixedIterations = *a.fixedIterations - 1
-				if *a.fixedIterations <= 0 {
-					a.l.Infof("finished requested number of iterations, waiting for all threads to finish...\n")
-					a.threadTracker.Wait()
-					a.l.Infof("...all threads finished, stopping bot update loop\n")
-					return
-				}
-			}
-
-			// wait for any goroutines from the current update to finish so we don't have inconsistent state reads
-			a.threadTracker.Wait()
-			a.l.Info("----------------------------------------------------------------------------------------------------")
-			lastUpdateTime = currentUpdateTime
-		}
-	}
-}
-
 func (a *Arbitrageur) blockStats() {
 	// for {
 	pprof.Lookup("block").WriteTo(os.Stdout, 1)
