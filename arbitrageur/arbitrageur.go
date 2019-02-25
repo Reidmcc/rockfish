@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Reidmcc/rockfish/modules"
-	"github.com/interstellar/kelp/api"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/stellar/go/clients/horizon"
