@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Reidmcc/rockfish/modules"
-	"github.com/interstellar/kelp/api"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/nikhilsaraf/go-tools/multithreading"
 	"github.com/stellar/go/clients/horizon"
@@ -15,19 +14,17 @@ import (
 
 // Arbitrageur is the bot struct
 type Arbitrageur struct {
-	PathFinder      modules.PathFinder
-	DexWatcher      modules.DexWatcher
-	DexAgent        *modules.DexAgent
-	timeController  api.TimeController
-	threadTracker   *multithreading.ThreadTracker
-	fixedIterations *uint64
-	simMode         bool
-	booksOut        <-chan *horizon.OrderBookSummary
-	ledgerOut       <-chan horizon.Ledger
-	findIt          chan<- bool
-	pathReturn      <-chan modules.PathFindOutcome
-	refresh         chan<- bool
-	l               logger.Logger
+	PathFinder    modules.PathFinder
+	DexWatcher    modules.DexWatcher
+	DexAgent      *modules.DexAgent
+	threadTracker *multithreading.ThreadTracker
+	simMode       bool
+	booksOut      <-chan *horizon.OrderBookSummary
+	ledgerOut     <-chan horizon.Ledger
+	findIt        chan<- bool
+	pathReturn    <-chan modules.PathFindOutcome
+	refresh       chan<- bool
+	l             logger.Logger
 
 	// uninitialized
 	endAssetDisplay string
@@ -38,9 +35,7 @@ func MakeArbitrageur(
 	pathFinder modules.PathFinder,
 	dexWatcher modules.DexWatcher,
 	dexAgent *modules.DexAgent,
-	timeController api.TimeController,
 	threadTracker *multithreading.ThreadTracker,
-	fixedIterations *uint64,
 	simMode bool,
 	booksOut chan *horizon.OrderBookSummary,
 	ledgerOut chan horizon.Ledger,
@@ -50,19 +45,17 @@ func MakeArbitrageur(
 	l logger.Logger,
 ) *Arbitrageur {
 	return &Arbitrageur{
-		PathFinder:      pathFinder,
-		DexWatcher:      dexWatcher,
-		DexAgent:        dexAgent,
-		timeController:  timeController,
-		threadTracker:   threadTracker,
-		fixedIterations: fixedIterations,
-		simMode:         simMode,
-		booksOut:        booksOut,
-		ledgerOut:       ledgerOut,
-		findIt:          findIt,
-		pathReturn:      pathReturn,
-		refresh:         refresh,
-		l:               l,
+		PathFinder:    pathFinder,
+		DexWatcher:    dexWatcher,
+		DexAgent:      dexAgent,
+		threadTracker: threadTracker,
+		simMode:       simMode,
+		booksOut:      booksOut,
+		ledgerOut:     ledgerOut,
+		findIt:        findIt,
+		pathReturn:    pathReturn,
+		refresh:       refresh,
+		l:             l,
 	}
 }
 
@@ -105,44 +98,6 @@ func (a *Arbitrageur) StartLedgerSynced() {
 		} else {
 			a.refresh <- true
 		}
-	}
-}
-
-// Start ...starts the legacy method
-func (a *Arbitrageur) Start() {
-	a.l.Info("----------------------------------------------------------------------------------------------------")
-	var lastUpdateTime time.Time
-
-	for {
-		currentUpdateTime := time.Now()
-		curBalance, e := a.DexAgent.JustAssetBalance(a.PathFinder.HoldAsset)
-		if e != nil {
-			a.l.Errorf("Error while checking pre-cycle hold balance: %s", e)
-		}
-		a.l.Infof("Going into the cycle %s balance was %v", a.endAssetDisplay, curBalance)
-		if lastUpdateTime.IsZero() || a.timeController.ShouldUpdate(lastUpdateTime, currentUpdateTime) {
-
-			// a.cycle()
-
-			if a.fixedIterations != nil {
-				*a.fixedIterations = *a.fixedIterations - 1
-				if *a.fixedIterations <= 0 {
-					a.l.Infof("finished requested number of iterations, waiting for all threads to finish...\n")
-					a.threadTracker.Wait()
-					a.l.Infof("...all threads finished, stopping bot update loop\n")
-					return
-				}
-			}
-
-			// wait for any goroutines from the current update to finish so we don't have inconsistent state reads
-			a.threadTracker.Wait()
-			a.l.Info("----------------------------------------------------------------------------------------------------")
-			lastUpdateTime = currentUpdateTime
-		}
-
-		sleepTime := a.timeController.SleepTime(lastUpdateTime, currentUpdateTime)
-		a.l.Infof("sleeping for %s...\n", sleepTime)
-		time.Sleep(sleepTime)
 	}
 }
 

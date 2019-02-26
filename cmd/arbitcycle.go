@@ -11,7 +11,6 @@ import (
 
 	"github.com/Reidmcc/rockfish/arbitrageur"
 	"github.com/Reidmcc/rockfish/modules"
-	"github.com/interstellar/kelp/plugins"
 	"github.com/interstellar/kelp/support/logger"
 	"github.com/interstellar/kelp/support/utils"
 	"github.com/nikhilsaraf/go-tools/multithreading"
@@ -67,7 +66,6 @@ func init() {
 	operationalBuffer := arbitcycleCmd.Flags().Float64("operationalBuffer", 20, "buffer of native XLM to maintain beyond minimum account balance requirement")
 	simMode := arbitcycleCmd.Flags().Bool("sim", false, "simulate the bot's actions without placing any trades")
 	logPrefix := arbitcycleCmd.Flags().StringP("log", "l", "", "log to a file (and stdout) with this prefix for the filename")
-	fixedIterations := arbitcycleCmd.Flags().Uint64("iter", 0, "only run the bot for the first N iterations (defaults value 0 runs unboundedly)")
 
 	requiredFlag("botConf")
 	hiddenFlag("operationalBuffer")
@@ -76,13 +74,6 @@ func init() {
 	validateCliParams := func(l logger.Logger) {
 		if *operationalBuffer < 0 {
 			panic(fmt.Sprintf("invalid operationalBuffer argument, must be non-negative: %f", *operationalBuffer))
-		}
-
-		if *fixedIterations == 0 {
-			fixedIterations = nil
-			l.Info("will run unbounded iterations")
-		} else {
-			l.Infof("will run only %d update iterations\n", *fixedIterations)
 		}
 	}
 
@@ -178,18 +169,11 @@ func init() {
 			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
 
-		timeController := plugins.MakeIntervalTimeController(
-			time.Duration(arbitConfig.TickIntervalSeconds)*time.Second,
-			0,
-		)
-
 		arbitrageur := arbitrageur.MakeArbitrageur(
 			*pathFinder,
 			*dexWatcher,
 			dexAgent,
-			timeController,
 			threadTracker,
-			fixedIterations,
 			*simMode,
 			booksOut,
 			ledgerOut,
