@@ -14,18 +14,17 @@ import (
 
 // Arbitrageur is the bot struct
 type Arbitrageur struct {
-	PathFinder      modules.PathFinder
-	DexWatcher      modules.DexWatcher
-	DexAgent        *modules.DexAgent
-	threadTracker   *multithreading.ThreadTracker
-	fixedIterations *uint64
-	simMode         bool
-	booksOut        <-chan *horizon.OrderBookSummary
-	ledgerOut       <-chan horizon.Ledger
-	findIt          chan<- bool
-	pathReturn      <-chan modules.PathFindOutcome
-	refresh         chan<- bool
-	l               logger.Logger
+	PathFinder    modules.PathFinder
+	DexWatcher    modules.DexWatcher
+	DexAgent      *modules.DexAgent
+	threadTracker *multithreading.ThreadTracker
+	simMode       bool
+	booksOut      <-chan *horizon.OrderBookSummary
+	ledgerOut     <-chan horizon.Ledger
+	findIt        chan<- bool
+	pathReturn    <-chan modules.PathFindOutcome
+	refresh       chan<- bool
+	l             logger.Logger
 
 	// uninitialized
 	endAssetDisplay string
@@ -37,7 +36,6 @@ func MakeArbitrageur(
 	dexWatcher modules.DexWatcher,
 	dexAgent *modules.DexAgent,
 	threadTracker *multithreading.ThreadTracker,
-	fixedIterations *uint64,
 	simMode bool,
 	booksOut chan *horizon.OrderBookSummary,
 	ledgerOut chan horizon.Ledger,
@@ -47,18 +45,17 @@ func MakeArbitrageur(
 	l logger.Logger,
 ) *Arbitrageur {
 	return &Arbitrageur{
-		PathFinder:      pathFinder,
-		DexWatcher:      dexWatcher,
-		DexAgent:        dexAgent,
-		threadTracker:   threadTracker,
-		fixedIterations: fixedIterations,
-		simMode:         simMode,
-		booksOut:        booksOut,
-		ledgerOut:       ledgerOut,
-		findIt:          findIt,
-		pathReturn:      pathReturn,
-		refresh:         refresh,
-		l:               l,
+		PathFinder:    pathFinder,
+		DexWatcher:    dexWatcher,
+		DexAgent:      dexAgent,
+		threadTracker: threadTracker,
+		simMode:       simMode,
+		booksOut:      booksOut,
+		ledgerOut:     ledgerOut,
+		findIt:        findIt,
+		pathReturn:    pathReturn,
+		refresh:       refresh,
+		l:             l,
 	}
 }
 
