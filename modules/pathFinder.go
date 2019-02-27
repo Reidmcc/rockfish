@@ -353,7 +353,7 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 	}
 
 	if len(pathBids) != len(path.PathSequence) {
-		return nil, nil, fmt.Errorf("couldn't match bids (len%v) with path sequence len(%v)", len(pathBids), len(path.PathSequence))
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, fmt.Errorf("couldn't match bids with path sequence; an orderbook call may have failed")
 	}
 
 	ratio := pathBids[0].Price
