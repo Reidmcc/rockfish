@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## Unreleased
 ### Fixed
 - Fixed a nil reference that could occur when a `calculatePathValues` call returned an error
+### Removed
+- `TICK_INTERVAL_SECONDS` is no longer supported; users will need to remove it from their `arbitconfig.cfg` file
 
 ## v 0.3.2-alpha
 
