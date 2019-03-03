@@ -8,12 +8,12 @@ import (
 
 // ArbitConfig represents the configuration params for the arbitrage bot
 type ArbitConfig struct {
-	TradingSecretSeed   string `valid:"-" toml:"TRADING_SECRET_SEED"`
-	SourceSecretSeed    string `valid:"-" toml:"SOURCE_SECRET_SEED"`
-	HorizonURL          string `valid:"-" toml:"HORIZON_URL"`
-
-	tradingAccount *string
-	sourceAccount  *string // can be nil
+	TradingSecretSeed string `valid:"-" toml:"TRADING_SECRET_SEED"`
+	SourceSecretSeed  string `valid:"-" toml:"SOURCE_SECRET_SEED"`
+	HorizonURL        string `valid:"-" toml:"HORIZON_URL"`
+	RateLimiterMS     int    `valid:"-" toml:"RATE_LIMITER_MS"`
+	tradingAccount    *string
+	sourceAccount     *string // can be nil
 }
 
 // String impl.

@@ -19,11 +19,13 @@ type Arbitrageur struct {
 	DexAgent      *modules.DexAgent
 	threadTracker *multithreading.ThreadTracker
 	simMode       bool
+	rateLimiter   func()
 	booksOut      <-chan *horizon.OrderBookSummary
 	ledgerOut     <-chan horizon.Ledger
 	findIt        chan<- bool
 	pathReturn    <-chan modules.PathFindOutcome
 	refresh       chan<- bool
+	submitDone    <-chan bool
 	l             logger.Logger
 
 	// uninitialized
@@ -36,12 +38,14 @@ func MakeArbitrageur(
 	dexWatcher modules.DexWatcher,
 	dexAgent *modules.DexAgent,
 	threadTracker *multithreading.ThreadTracker,
+	rateLimiter func(),
 	simMode bool,
 	booksOut chan *horizon.OrderBookSummary,
 	ledgerOut chan horizon.Ledger,
 	findIt chan<- bool,
 	pathReturn <-chan modules.PathFindOutcome,
 	refresh chan<- bool,
+	submitDone <-chan bool,
 	l logger.Logger,
 ) *Arbitrageur {
 	return &Arbitrageur{
@@ -50,11 +54,13 @@ func MakeArbitrageur(
 		DexAgent:      dexAgent,
 		threadTracker: threadTracker,
 		simMode:       simMode,
+		rateLimiter:   rateLimiter,
 		booksOut:      booksOut,
 		ledgerOut:     ledgerOut,
 		findIt:        findIt,
 		pathReturn:    pathReturn,
 		refresh:       refresh,
+		submitDone:    submitDone,
 		l:             l,
 	}
 }
@@ -72,34 +78,35 @@ func (a *Arbitrageur) StartLedgerSynced() {
 			if !encountered[v.Pair] && !encountered[modules.TradingPair{Base: v.Pair.Quote, Quote: v.Pair.Base}] {
 				encountered[v.Pair] = true
 				trimmedPairBook = append(trimmedPairBook, v.Pair)
-				a.l.Infof("%v\n", v)
 			}
 		}
 	}
 
 	go a.DexWatcher.StreamManager(trimmedPairBook)
 
-	// create a ticker to regulate the rate of path checking
 	shouldDelay := false
-	go func() {
-		delayticker := time.NewTicker(2 * time.Second)
-		for {
-			<-delayticker.C
-			shouldDelay = false
-		}
-	}()
 
 	for {
 		go a.PathFinder.FindBestPathConcurrent()
 		<-a.booksOut
 		if !shouldDelay {
-
-			a.findIt <- true
 			shouldDelay = true
-
+			a.findIt <- true
+			go func() {
+				delayTimer := time.NewTimer(2 * time.Second)
+				<-delayTimer.C
+				shouldDelay = false
+			}()
 			r := <-a.pathReturn
 			if r.MetThreshold {
 				a.DexAgent.SendPaymentCycle(r.BestPath, r.MaxAmount)
+				submitTimeout := time.NewTimer(5 * time.Second)
+				select {
+				case <-a.submitDone:
+					continue
+				case <-submitTimeout.C:
+					continue
+				}
 			}
 		} else {
 			a.refresh <- true

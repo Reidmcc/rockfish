@@ -2,7 +2,6 @@ package modules
 
 import (
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -52,6 +51,7 @@ type PathFinder struct {
 	dexWatcher  DexWatcher
 	AssetGroups []*AssetGroup
 	minRatio    *model.Number
+	rateLimiter func()
 	findIt      chan bool
 	pathReturn  chan<- PathFindOutcome
 	refresh     <-chan bool
@@ -59,7 +59,6 @@ type PathFinder struct {
 }
 
 func configGroup(groupData GroupInput, pairNum int, l logger.Logger) (*AssetGroup, int) {
-	log.Printf("%v\n", groupData)
 	holdAsset := ParseAsset(groupData.HoldAssetCode, groupData.HoldAssetIssuer)
 
 	var assetBook []horizon.Asset
@@ -134,6 +133,7 @@ func configGroup(groupData GroupInput, pairNum int, l logger.Logger) (*AssetGrou
 func MakePathFinder(
 	dexWatcher DexWatcher,
 	stratConfig ArbitCycleConfig,
+	rateLimiter func(),
 	findIt chan bool,
 	pathReturn chan<- PathFindOutcome,
 	refresh <-chan bool,
@@ -153,6 +153,7 @@ func MakePathFinder(
 		dexWatcher:  dexWatcher,
 		AssetGroups: assetGroups,
 		minRatio:    model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
+		rateLimiter: rateLimiter,
 		findIt:      findIt,
 		pathReturn:  pathReturn,
 		refresh:     refresh,
@@ -314,6 +315,7 @@ func (p *PathFinder) FindBestPathConcurrent() {
 					}
 					bidResults <- bidResult{PathID: pairSet.ID, Price: topBidPrice, Amount: topBidAmount}
 				}(b)
+				p.rateLimiter()
 			}
 		}
 
@@ -344,6 +346,7 @@ func (p *PathFinder) FindBestPathConcurrent() {
 					}
 					pathResults <- pathResult{Path: path, Ratio: ratio, Amount: amount, MetAmount: metAmount}
 				}(g.PathList[i], bidSet)
+				p.rateLimiter()
 			}
 		}
 
@@ -352,11 +355,13 @@ func (p *PathFinder) FindBestPathConcurrent() {
 		close(pathResults)
 
 		for _, r := range pathSet {
-			if r.Ratio.AsFloat() > bestRatio.AsFloat() && r.MetAmount {
+			if r.Ratio.AsFloat() > bestRatio.AsFloat() {
 				foundAnyRoute = true
-				bestRatio = r.Ratio
-				maxAmount = r.Amount
-				bestPath = r.Path
+				if r.MetAmount {
+					bestRatio = r.Ratio
+					maxAmount = r.Amount
+					bestPath = r.Path
+				}
 			}
 		}
 

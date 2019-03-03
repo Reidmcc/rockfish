@@ -28,6 +28,8 @@ type DexAgent struct {
 	TradingAccount    string
 	Network           build.Network
 	threadTracker     *multithreading.ThreadTracker
+	rateLimiter       func()
+	submitDone        chan<- bool
 	operationalBuffer float64
 	minRatio          *model.Number
 	simMode           bool
@@ -53,6 +55,8 @@ func MakeDexAgent(
 	tradingAccount string,
 	network build.Network,
 	threadTracker *multithreading.ThreadTracker,
+	rateLimiter func(),
+	submitDone chan<- bool,
 	operationalBuffer float64,
 	minRatio float64,
 	simMode bool,
@@ -66,6 +70,8 @@ func MakeDexAgent(
 		TradingAccount:    tradingAccount,
 		Network:           network,
 		threadTracker:     threadTracker,
+		rateLimiter:       rateLimiter,
+		submitDone:        submitDone,
 		operationalBuffer: operationalBuffer,
 		minRatio:          model.NumberFromFloat(minRatio, utils.SdexPrecision),
 		simMode:           simMode,
@@ -97,27 +103,6 @@ func (dA *DexAgent) incrementSeqNum() {
 	dA.seqNum++
 }
 
-// assetBalance returns asset balance, asset trust limit, reserve balance, error
-func (dA *DexAgent) assetBalance(asset horizon.Asset) (float64, float64, float64, error) {
-	account, err := dA.API.LoadAccount(dA.TradingAccount)
-	if err != nil {
-		return -1, -1, -1, fmt.Errorf("error: unable to load account to fetch balance: %s", err)
-	}
-
-	for _, balance := range account.Balances {
-		if utils.AssetsEqual(balance.Asset, asset) {
-			b, e := strconv.ParseFloat(balance.Balance, 64)
-			if e != nil {
-				return -1, -1, -1, fmt.Errorf("error: cannot parse balance: %s", e)
-			}
-			if balance.Asset.Type == utils.Native {
-				return b, maxLumenTrust, dA.minReserve(account.SubentryCount) + dA.operationalBuffer, e
-			}
-		}
-	}
-	return -1, -1, -1, errors.New("could not find a balance for the asset passed in")
-}
-
 // JustAssetBalance returns asset balance
 func (dA *DexAgent) JustAssetBalance(asset horizon.Asset) (float64, error) {
 	account, err := dA.API.LoadAccount(dA.TradingAccount)
@@ -134,6 +119,7 @@ func (dA *DexAgent) JustAssetBalance(asset horizon.Asset) (float64, error) {
 			if balance.Asset.Type == utils.Native {
 				return b - (dA.minReserve(account.SubentryCount) + dA.operationalBuffer), e
 			}
+			return b, e
 		}
 	}
 	return -1, errors.New("could not find a balance for the asset passed in")
@@ -172,6 +158,7 @@ func (dA *DexAgent) SubmitOps(ops []build.TransactionMutator, asyncCallback func
 		dA.l.Info("not submitting tx XDR to network in simulation mode, calling asyncCallback with empty hash value")
 		dA.invokeAsyncCallback(asyncCallback, "", nil)
 	}
+
 	return nil
 }
 
@@ -275,8 +262,9 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 	// if cycleAmount is still maxAmount, reduce it to allow for stellar core price rounding
 	// if the price gets rounded against us the payment will slip to the next offer and end up over source max
 	// core should round by no more than 1%
+	// going down to 0.75 to test the op-over thing
 	if cycleAmount.AsFloat() >= maxAmount.AsFloat() {
-		cycleAmount = maxAmount.Scale(0.98)
+		cycleAmount = maxAmount.Scale(0.75)
 	}
 
 	holdAsset, throughAssetA, throughAssetB := Path2Assets(path)
