@@ -65,12 +65,18 @@ func (a *Arbitrageur) StartLedgerSynced() {
 	// trim the duplicate pairs to avoid duplicate streams
 	encountered := make(map[modules.TradingPair]bool)
 	var trimmedPairBook []modules.TradingPair
-	for _, v := range a.PathFinder.PairBook {
-		if !encountered[v] && !encountered[modules.TradingPair{Base: v.Quote, Quote: v.Base}] {
-			encountered[v] = true
-			trimmedPairBook = append(trimmedPairBook, v)
+
+	for _, g := range a.PathFinder.AssetGroups {
+
+		for _, v := range g.PairBook {
+			if !encountered[v.Pair] && !encountered[modules.TradingPair{Base: v.Pair.Quote, Quote: v.Pair.Base}] {
+				encountered[v.Pair] = true
+				trimmedPairBook = append(trimmedPairBook, v.Pair)
+				a.l.Infof("%v\n", v)
+			}
 		}
 	}
+
 	go a.DexWatcher.StreamManager(trimmedPairBook)
 
 	// create a ticker to regulate the rate of path checking

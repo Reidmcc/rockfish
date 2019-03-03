@@ -196,7 +196,7 @@ func (w *DexWatcher) AddTrackedBook(ctx context.Context, pair TradingPair, limit
 	if pair.Quote.Type == "native" {
 		quoteCodeDisplay = "XLM"
 	}
-	baseCodeDisplay := pair.Quote.Code
+	baseCodeDisplay := pair.Base.Code
 	if pair.Base.Type == "native" {
 		baseCodeDisplay = "XLM"
 	}

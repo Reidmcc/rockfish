@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"sync"
 
 	"github.com/interstellar/kelp/model"
 	"github.com/interstellar/kelp/support/logger"
@@ -31,16 +30,12 @@ type DexAgent struct {
 	threadTracker     *multithreading.ThreadTracker
 	operationalBuffer float64
 	minRatio          *model.Number
-	minAmount         *model.Number
-	useBalance        bool
 	simMode           bool
 	l                 logger.Logger
 
 	// uninitialized
 	seqNum       uint64
 	reloadSeqNum bool
-	baseAmount   *model.Number
-	transMutex   sync.Mutex
 }
 
 // TransData contains the data needed to contruct a path payment
@@ -60,9 +55,6 @@ func MakeDexAgent(
 	threadTracker *multithreading.ThreadTracker,
 	operationalBuffer float64,
 	minRatio float64,
-	useBalance bool,
-	staticAmount float64,
-	minAmount float64,
 	simMode bool,
 	l logger.Logger,
 ) *DexAgent {
@@ -76,8 +68,6 @@ func MakeDexAgent(
 		threadTracker:     threadTracker,
 		operationalBuffer: operationalBuffer,
 		minRatio:          model.NumberFromFloat(minRatio, utils.SdexPrecision),
-		minAmount:         model.NumberFromFloat(minAmount, utils.SdexPrecision),
-		useBalance:        useBalance,
 		simMode:           simMode,
 		l:                 l,
 	}
@@ -86,10 +76,6 @@ func MakeDexAgent(
 		dexAgent.SourceAccount = dexAgent.TradingAccount
 		dexAgent.SourceSeed = dexAgent.TradingSeed
 		l.Info("No Source Account Set")
-	}
-
-	if !useBalance {
-		dexAgent.baseAmount = model.NumberFromFloat(staticAmount, utils.SdexPrecision)
 	}
 
 	dexAgent.reloadSeqNum = true
@@ -270,7 +256,7 @@ func (dA *DexAgent) SendPaymentCycle(path *PaymentPath, maxAmount *model.Number)
 func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) (*build.PaymentBuilder, error) {
 	cycleAmount := maxAmount
 
-	if dA.useBalance {
+	if path.UseBalance {
 		balance, e := dA.JustAssetBalance(path.HoldAsset)
 		if e != nil {
 			return nil, fmt.Errorf("error getting account hold asset balance %s", e)
@@ -280,9 +266,9 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 		}
 	}
 
-	if !dA.useBalance {
-		if dA.baseAmount.AsFloat() < maxAmount.AsFloat() {
-			cycleAmount = dA.baseAmount
+	if !path.UseBalance {
+		if path.StaticAmount.AsFloat() < maxAmount.AsFloat() {
+			cycleAmount = path.StaticAmount
 		}
 	}
 
@@ -337,102 +323,104 @@ func (dA *DexAgent) makePathPayment(path *PaymentPath, maxAmount *model.Number) 
 }
 
 // SendByFoundPath executes a payment cycle for the find-path protocol
-func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, maxAmount *model.Number, hold chan bool, done chan bool) error {
+// deprecated until pathRequestor is rebuilt
+// func (dA *DexAgent) SendByFoundPath(path *PathRecord, holdAsset *horizon.Asset, maxAmount *model.Number, hold chan bool, done chan bool) error {
 
-	payOp, e := dA.makePathPaymentredux(path, holdAsset, maxAmount)
-	if e != nil {
-		return fmt.Errorf("error trying to send via found path")
-	}
+// 	payOp, e := dA.makePathPaymentredux(path, holdAsset, maxAmount)
+// 	if e != nil {
+// 		return fmt.Errorf("error trying to send via found path")
+// 	}
 
-	var opList []build.TransactionMutator
-	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
-	opList = append(opList, payOp)
+// 	var opList []build.TransactionMutator
+// 	//opList will be a list of one because the submission func wants a list (so it can do multi-op transactions)
+// 	opList = append(opList, payOp)
 
-	e = dA.SubmitOps(opList, nil)
-	if e != nil {
-		return fmt.Errorf("error submitting path payment op: %s", e)
-	}
+// 	e = dA.SubmitOps(opList, nil)
+// 	if e != nil {
+// 		return fmt.Errorf("error submitting path payment op: %s", e)
+// 	}
 
-	return nil
-}
+// 	return nil
+// }
 
 // makePathPaymentredux contructs a path payment from a find-path PathRecord
-func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon.Asset, amount *model.Number) (*build.PaymentBuilder, error) {
+// deprecated until pathRequestor is rebuilt
+// func (dA *DexAgent) makePathPaymentredux(payPath *PathRecord, holdAsset *horizon.Asset, amount *model.Number) (*build.PaymentBuilder, error) {
 
-	// if not using balance the amount will have already been adjusted to the static amount
-	if dA.useBalance == true {
-		balance, e := dA.JustAssetBalance(*holdAsset)
-		numBalanace := model.NumberFromFloat(balance, utils.SdexPrecision)
-		if e != nil {
-			return nil, fmt.Errorf("error creating path payment op: %s", e)
-		}
+// 	// if not using balance the amount will have already been adjusted to the static amount
+// 	if dA.useBalance == true {
+// 		balance, e := dA.JustAssetBalance(*holdAsset)
+// 		numBalanace := model.NumberFromFloat(balance, utils.SdexPrecision)
+// 		if e != nil {
+// 			return nil, fmt.Errorf("error creating path payment op: %s", e)
+// 		}
 
-		if numBalanace.AsFloat() < amount.AsFloat() {
-			amount = numBalanace
-		}
+// 		if numBalanace.AsFloat() < amount.AsFloat() {
+// 			amount = numBalanace
+// 		}
 
-	}
+// 	}
 
-	receiveAmount := amount.AsString()
+// 	receiveAmount := amount.AsString()
 
-	// use the literal horizon output for cost, yeesh
-	maxPayAmount := payPath.SourceAmount
-	numMax, e := model.NumberFromString(maxPayAmount, utils.SdexPrecision)
-	if e != nil {
-		return nil, fmt.Errorf("error converting source amount string to model.number: %s", e)
-	}
+// 	// use the literal horizon output for cost, yeesh
+// 	maxPayAmount := payPath.SourceAmount
+// 	numMax, e := model.NumberFromString(maxPayAmount, utils.SdexPrecision)
+// 	if e != nil {
+// 		return nil, fmt.Errorf("error converting source amount string to model.number: %s", e)
+// 	}
 
-	// with a stop to make sure it's not over somehow
-	if numMax.AsFloat() > amount.AsFloat() {
-		maxPayAmount = amount.AsString()
-	}
+// 	// with a stop to make sure it's not over somehow
+// 	if numMax.AsFloat() > amount.AsFloat() {
+// 		maxPayAmount = amount.AsString()
+// 	}
 
-	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
-	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
+// 	dA.l.Infof("receiveAmount string set to: %s", receiveAmount)
+// 	dA.l.Infof("maxPayAmount string set to: %s", maxPayAmount)
 
-	convertHoldAsset := utils.Asset2Asset(*holdAsset)
+// 	convertHoldAsset := utils.Asset2Asset(*holdAsset)
 
-	pw := build.PayWith(convertHoldAsset, maxPayAmount)
+// 	pw := build.PayWith(convertHoldAsset, maxPayAmount)
 
-	for i := 0; i < len(payPath.Path); i++ {
-		dA.l.Infof("Adding to payment path: %s|%s", payPath.Path[i].AssetCode, payPath.Path[i].AssetIssuer)
-		convertAsset := PathAsset2BuildAsset(payPath.Path[i])
-		pw = pw.Through(convertAsset)
-	}
+// 	for i := 0; i < len(payPath.Path); i++ {
+// 		dA.l.Infof("Adding to payment path: %s|%s", payPath.Path[i].AssetCode, payPath.Path[i].AssetIssuer)
+// 		convertAsset := PathAsset2BuildAsset(payPath.Path[i])
+// 		pw = pw.Through(convertAsset)
+// 	}
 
-	// if not calculating the full path you must add the asset set as the "destination" as a path asset
-	lastPathAsset := PathAsset{
-		AssetType:   payPath.DestinationAssetType,
-		AssetCode:   payPath.DestinationAssetCode,
-		AssetIssuer: payPath.DestinationAssetIssuer,
-	}
+// 	// if not calculating the full path you must add the asset set as the "destination" as a path asset
+// 	lastPathAsset := PathAsset{
+// 		AssetType:   payPath.DestinationAssetType,
+// 		AssetCode:   payPath.DestinationAssetCode,
+// 		AssetIssuer: payPath.DestinationAssetIssuer,
+// 	}
 
-	lastConvertAsset := PathAsset2BuildAsset(lastPathAsset)
+// 	lastConvertAsset := PathAsset2BuildAsset(lastPathAsset)
 
-	pw = pw.Through(lastConvertAsset)
-	dA.l.Infof("adding to payment path: %s|%s", lastPathAsset.AssetCode, lastPathAsset.AssetIssuer)
+// 	pw = pw.Through(lastConvertAsset)
+// 	dA.l.Infof("adding to payment path: %s|%s", lastPathAsset.AssetCode, lastPathAsset.AssetIssuer)
 
-	dA.l.Infof("raw build.PayWith set to: %s", pw)
+// 	dA.l.Infof("raw build.PayWith set to: %s", pw)
 
-	if convertHoldAsset == build.NativeAsset() {
+// 	if convertHoldAsset == build.NativeAsset() {
 
-		payOp := build.Payment(
-			build.Destination{AddressOrSeed: dA.TradingAccount},
-			build.NativeAmount{Amount: receiveAmount},
-			pw,
-		)
-		return &payOp, nil
-	}
+// 		payOp := build.Payment(
+// 			build.Destination{AddressOrSeed: dA.TradingAccount},
+// 			build.NativeAmount{Amount: receiveAmount},
+// 			pw,
+// 		)
+// 		return &payOp, nil
+// 	}
 
-	payOp := build.Payment(
-		build.Destination{AddressOrSeed: dA.TradingAccount},
-		build.CreditAmount{
-			Code:   convertHoldAsset.Code,
-			Issuer: convertHoldAsset.Issuer,
-			Amount: receiveAmount,
-		},
-		pw,
-	)
+// 	payOp := build.Payment(
+// 		build.Destination{AddressOrSeed: dA.TradingAccount},
+// 		build.CreditAmount{
+// 			Code:   convertHoldAsset.Code,
+// 			Issuer: convertHoldAsset.Issuer,
+// 			Amount: receiveAmount,
+// 		},
+// 		pw,
+// 	)
 
-	return &payOp, nil
-}
+// 	return &payOp, nil
+// }

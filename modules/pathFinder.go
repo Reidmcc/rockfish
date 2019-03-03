@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -14,38 +15,119 @@ import (
 
 // ArbitCycleConfig holds the arbitrage strategy settings
 type ArbitCycleConfig struct {
+	MinRatio float64      `valid:"-" toml:"MIN_RATIO"`
+	Groups   []GroupInput `valid:"-" toml:"GROUPS"`
+}
+
+// GroupInput holds the inbound strings for the asset groups
+type GroupInput struct {
 	HoldAssetCode   string       `valid:"-" toml:"HOLD_ASSET_CODE"`
 	HoldAssetIssuer string       `valid:"-" toml:"HOLD_ASSET_ISSUER"`
-	MinRatio        float64      `valid:"-" toml:"MIN_RATIO"`
 	UseBalance      bool         `valid:"-" toml:"USE_BALANCE"`
 	StaticAmount    float64      `valid:"-" toml:"STATIC_AMOUNT"`
 	MinAmount       float64      `valid:"-" toml:"MIN_AMOUNT"`
 	Assets          []assetInput `valid:"-" toml:"ASSETS"`
 }
 
-// PathFinder keeps track of all the possible payment paths
-type PathFinder struct {
-	dexWatcher   DexWatcher
-	HoldAsset    horizon.Asset
-	AssetBook    []groupedAsset
-	PathList     []*PaymentPath
-	PairBook     map[int]TradingPair
-	minRatio     *model.Number
-	useBalance   bool
-	staticAmount *model.Number
-	minAmount    *model.Number
-	findIt       chan bool
-	pathReturn   chan<- PathFindOutcome
-	refresh      <-chan bool
-	l            logger.Logger
-
-	//unintialized
-	endAssetDisplay string
+// assetInput holds the inbound asset strings
+type assetInput struct {
+	CODE   string `valid:"-" toml:"CODE"`
+	ISSUER string `valid:"-" toml:"ISSUER"`
 }
 
-type groupedAsset struct {
-	Asset horizon.Asset
-	Group int
+// AssetGroup is an operational asset set and its settings
+type AssetGroup struct {
+	HoldAsset    horizon.Asset
+	AssetBook    []horizon.Asset
+	PathList     []*PaymentPath
+	PairBook     []PairBookEntry
+	useBalance   bool
+	staticAmount *model.Number
+	MinAmount    *model.Number
+}
+
+//
+// PathFinder keeps track of all the possible payment paths
+type PathFinder struct {
+	dexWatcher  DexWatcher
+	AssetGroups []*AssetGroup
+	minRatio    *model.Number
+	findIt      chan bool
+	pathReturn  chan<- PathFindOutcome
+	refresh     <-chan bool
+	l           logger.Logger
+}
+
+func configGroup(groupData GroupInput, pairNum int, l logger.Logger) (*AssetGroup, int) {
+	log.Printf("%v\n", groupData)
+	holdAsset := ParseAsset(groupData.HoldAssetCode, groupData.HoldAssetIssuer)
+
+	var assetBook []horizon.Asset
+
+	for _, a := range groupData.Assets {
+		asset := ParseAsset(a.CODE, a.ISSUER)
+		assetBook = append(assetBook, asset)
+	}
+
+	endAssetDisplay := holdAsset.Code //this is just so XLM doesn't show up blank
+	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
+		endAssetDisplay = "XLM"
+	}
+
+	var rawPairBook []TradingPair
+
+	for i := 0; i < len(assetBook); i++ {
+		for n := 0; n < len(assetBook); n++ {
+			if assetBook[i] != assetBook[n] {
+				rawPairBook = append(rawPairBook, TradingPair{Base: assetBook[i], Quote: assetBook[n]})
+			}
+		}
+	}
+
+	// then add the HoldAsset pairs, both directions
+	for i := 0; i < len(assetBook); i++ {
+		rawPairBook = append(rawPairBook, TradingPair{Base: assetBook[i], Quote: holdAsset})
+		rawPairBook = append(rawPairBook, TradingPair{Base: holdAsset, Quote: assetBook[i]})
+	}
+
+	encounteredPair := make(map[TradingPair]bool)
+	var pairBook []PairBookEntry
+
+	//not going to consider opposite direction pairs as duplicates, can change it later
+	for v := 0; v < len(rawPairBook); v++ {
+		if !encounteredPair[rawPairBook[v]] {
+			encounteredPair[rawPairBook[v]] = true
+			pairBook = append(pairBook, PairBookEntry{pairNum, rawPairBook[v]})
+			pairNum++
+		}
+	}
+
+	var pathList []*PaymentPath
+	staticAmount := model.NumberFromFloat(groupData.StaticAmount, utils.SdexPrecision)
+	minAmount := model.NumberFromFloat(groupData.MinAmount, utils.SdexPrecision)
+
+	for i := 0; i < len(assetBook); i++ {
+		for n := 0; n < len(assetBook); n++ {
+			if assetBook[i] != assetBook[n] {
+				path, e := makePaymentPath(assetBook[i], assetBook[n], holdAsset, pairBook, groupData.UseBalance, staticAmount, minAmount)
+				if e != nil {
+					logger.Fatal(l, e)
+				}
+				l.Infof("added path: %s -> %s | %s -> %s | %s -> %s", endAssetDisplay, assetBook[i].Code, assetBook[i].Issuer, assetBook[n].Code, assetBook[n].Issuer, endAssetDisplay)
+				pathList = append(pathList, path)
+			}
+		}
+	}
+
+	return &AssetGroup{
+		HoldAsset:    holdAsset,
+		AssetBook:    assetBook,
+		PathList:     pathList,
+		PairBook:     pairBook,
+		useBalance:   groupData.UseBalance,
+		staticAmount: model.NumberFromFloat(groupData.StaticAmount, utils.SdexPrecision),
+		MinAmount:    model.NumberFromFloat(groupData.MinAmount, utils.SdexPrecision),
+	}, pairNum
 }
 
 // MakePathFinder is a factory method
@@ -57,91 +139,31 @@ func MakePathFinder(
 	refresh <-chan bool,
 	l logger.Logger,
 ) (*PathFinder, error) {
-	holdAsset := ParseAsset(stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
 
-	var assetBook []groupedAsset
-
-	for _, a := range stratConfig.Assets {
-		asset := ParseAsset(a.CODE, a.ISSUER)
-		group := a.GROUP
-		entry := groupedAsset{
-			Asset: asset,
-			Group: group,
-		}
-		assetBook = append(assetBook, entry)
-	}
-
-	endAssetDisplay := holdAsset.Code //this is just so XLM doesn't show up blank
-
-	if utils.Asset2Asset(holdAsset) == build.NativeAsset() {
-		endAssetDisplay = "XLM"
-	}
-
-	var rawPairBook []TradingPair
-
-	for i := 0; i < len(assetBook); i++ {
-		for n := 0; n < len(assetBook); n++ {
-			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
-				rawPairBook = append(rawPairBook, TradingPair{Base: assetBook[i].Asset, Quote: assetBook[n].Asset})
-			}
-		}
-	}
-	// then add the HoldAsset pairs, both directions
-	for i := 0; i < len(assetBook); i++ {
-		rawPairBook = append(rawPairBook, TradingPair{Base: assetBook[i].Asset, Quote: holdAsset})
-		rawPairBook = append(rawPairBook, TradingPair{Base: holdAsset, Quote: assetBook[i].Asset})
-	}
-
-	encountered := make(map[TradingPair]bool)
-	pairBook := make(map[int]TradingPair)
-
-	//not going to consider opposite direction pairs as duplicates, can change it later
-	for v := range rawPairBook {
-		if !encountered[rawPairBook[v]] {
-			encountered[rawPairBook[v]] = true
-			pairBook[v] = rawPairBook[v]
-		}
-	}
-
-	var pathList []*PaymentPath
-	l.Info("generating path list: ")
-
-	for i := 0; i < len(assetBook); i++ {
-		for n := 0; n < len(assetBook); n++ {
-			if assetBook[i].Asset != assetBook[n].Asset && assetBook[i].Group == assetBook[n].Group {
-				path, e := makePaymentPath(assetBook[i].Asset, assetBook[n].Asset, holdAsset, pairBook)
-				if e != nil {
-					logger.Fatal(l, e)
-				}
-				l.Infof("added path: %s -> %s | %s -> %s | %s -> %s", endAssetDisplay, assetBook[i].Asset.Code, assetBook[i].Asset.Issuer, assetBook[n].Asset.Code, assetBook[n].Asset.Issuer, endAssetDisplay)
-				pathList = append(pathList, path)
-			}
-		}
+	// pairNum keeps there from being duplicate pair IDs
+	pairNum := 0
+	var assetGroups []*AssetGroup
+	for _, g := range stratConfig.Groups {
+		group, pairCount := configGroup(g, pairNum, l)
+		pairNum = pairCount
+		assetGroups = append(assetGroups, group)
 	}
 
 	return &PathFinder{
-		dexWatcher:      dexWatcher,
-		HoldAsset:       holdAsset,
-		AssetBook:       assetBook,
-		PathList:        pathList,
-		PairBook:        pairBook,
-		minRatio:        model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
-		useBalance:      stratConfig.UseBalance,
-		staticAmount:    model.NumberFromFloat(stratConfig.StaticAmount, utils.SdexPrecision),
-		minAmount:       model.NumberFromFloat(stratConfig.MinAmount, utils.SdexPrecision),
-		findIt:          findIt,
-		pathReturn:      pathReturn,
-		refresh:         refresh,
-		l:               l,
-		endAssetDisplay: endAssetDisplay,
+		dexWatcher:  dexWatcher,
+		AssetGroups: assetGroups,
+		minRatio:    model.NumberFromFloat(stratConfig.MinRatio, utils.SdexPrecision),
+		findIt:      findIt,
+		pathReturn:  pathReturn,
+		refresh:     refresh,
+		l:           l,
 	}, nil
 }
 
-// assetInput holds the inbound asset strings
-type assetInput struct {
-	CODE   string `valid:"-"`
-	ISSUER string `valid:"-"`
-	GROUP  int    `valid:"-"`
+// PairBookEntry is a numbered trading pair
+type PairBookEntry struct {
+	ID   int
+	Pair TradingPair
 }
 
 // TradingPair represents a trading pair
@@ -156,6 +178,9 @@ type PaymentPath struct {
 	PathAssetA   horizon.Asset
 	PathAssetB   horizon.Asset
 	PathSequence []PathPair
+	UseBalance   bool
+	StaticAmount *model.Number
+	MinAmount    *model.Number
 }
 
 // PathPair is a trading pair with a price inversion flag
@@ -171,9 +196,10 @@ type BasicOrderBookLevel struct {
 }
 
 type pathResult struct {
-	Path   *PaymentPath
-	Ratio  *model.Number
-	Amount *model.Number
+	Path      *PaymentPath
+	Ratio     *model.Number
+	Amount    *model.Number
+	MetAmount bool
 }
 
 type bidResult struct {
@@ -199,29 +225,33 @@ func makePaymentPath(
 	assetA horizon.Asset,
 	assetB horizon.Asset,
 	holdAsset horizon.Asset,
-	pairBook map[int]TradingPair) (*PaymentPath, error) {
+	pairBook []PairBookEntry,
+	useBalance bool,
+	staticAmount *model.Number,
+	minAmount *model.Number,
+) (*PaymentPath, error) {
 	var pathSequence []PathPair
 
 	// find the pairs from the book
-	for id, b := range pairBook {
-		if holdAsset == b.Base && assetA == b.Quote {
-			path := PathPair{PairID: id, Pair: b}
+	for _, b := range pairBook {
+		if holdAsset == b.Pair.Base && assetA == b.Pair.Quote {
+			path := PathPair{PairID: b.ID, Pair: b.Pair}
 			pathSequence = append(pathSequence, path)
 			break
 		}
 	}
 
-	for id, b := range pairBook {
-		if assetA == b.Base && assetB == b.Quote {
-			path := PathPair{PairID: id, Pair: b}
+	for _, b := range pairBook {
+		if assetA == b.Pair.Base && assetB == b.Pair.Quote {
+			path := PathPair{PairID: b.ID, Pair: b.Pair}
 			pathSequence = append(pathSequence, path)
 			break
 		}
 	}
 
-	for id, b := range pairBook {
-		if assetB == b.Base && holdAsset == b.Quote {
-			path := PathPair{PairID: id, Pair: b}
+	for _, b := range pairBook {
+		if assetB == b.Pair.Base && holdAsset == b.Pair.Quote {
+			path := PathPair{PairID: b.ID, Pair: b.Pair}
 			pathSequence = append(pathSequence, path)
 			break
 		}
@@ -236,6 +266,9 @@ func makePaymentPath(
 		PathAssetA:   assetA,
 		PathAssetB:   assetB,
 		PathSequence: pathSequence,
+		UseBalance:   useBalance,
+		StaticAmount: staticAmount,
+		MinAmount:    minAmount,
 	}, nil
 }
 
@@ -248,8 +281,8 @@ func (p *PathFinder) FindBestPathConcurrent() {
 	var bestPath *PaymentPath
 	var bidSet []bidResult
 	var pathSet []pathResult
-	pathResults := make(chan pathResult, len(p.PathList))
-	bidResults := make(chan bidResult, len(p.PairBook))
+	pathResults := make(chan pathResult, 30)
+	bidResults := make(chan bidResult, 30)
 	var wgOne sync.WaitGroup
 	var wgTwo sync.WaitGroup
 
@@ -269,17 +302,19 @@ func (p *PathFinder) FindBestPathConcurrent() {
 			}
 		}()
 
-		for id, b := range p.PairBook {
-			wgOne.Add(1)
-			go func(id int, pair TradingPair) {
-				defer wgOne.Done()
-				topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(pair)
-				if e != nil {
-					p.l.Errorf("Error getting orderbook %s", e)
-					return
-				}
-				bidResults <- bidResult{PathID: id, Price: topBidPrice, Amount: topBidAmount}
-			}(id, b)
+		for _, g := range p.AssetGroups {
+			for _, b := range g.PairBook {
+				wgOne.Add(1)
+				go func(pairSet PairBookEntry) {
+					defer wgOne.Done()
+					topBidPrice, topBidAmount, e := p.dexWatcher.GetTopBid(pairSet.Pair)
+					if e != nil {
+						p.l.Errorf("Error getting orderbook %s", e)
+						return
+					}
+					bidResults <- bidResult{PathID: pairSet.ID, Price: topBidPrice, Amount: topBidAmount}
+				}(b)
+			}
 		}
 
 		wgOne.Wait()
@@ -297,17 +332,19 @@ func (p *PathFinder) FindBestPathConcurrent() {
 			}
 		}()
 
-		for i := 0; i < len(p.PathList); i++ {
-			wgTwo.Add(1)
-			go func(path *PaymentPath, bids []bidResult) {
-				defer wgTwo.Done()
-				ratio, amount, e := p.calculatePathValues(path, bids)
-				if e != nil {
-					p.l.Errorf("error while calculating ratios: %s", e)
-					return
-				}
-				pathResults <- pathResult{Path: path, Ratio: ratio, Amount: amount}
-			}(p.PathList[i], bidSet)
+		for _, g := range p.AssetGroups {
+			for i := 0; i < len(g.PathList); i++ {
+				wgTwo.Add(1)
+				go func(path *PaymentPath, bids []bidResult) {
+					defer wgTwo.Done()
+					ratio, amount, metAmount, e := p.calculatePathValues(path, bids, g.MinAmount)
+					if e != nil {
+						p.l.Errorf("error while calculating ratios: %s", e)
+						return
+					}
+					pathResults <- pathResult{Path: path, Ratio: ratio, Amount: amount, MetAmount: metAmount}
+				}(g.PathList[i], bidSet)
+			}
 		}
 
 		wgTwo.Wait()
@@ -315,7 +352,7 @@ func (p *PathFinder) FindBestPathConcurrent() {
 		close(pathResults)
 
 		for _, r := range pathSet {
-			if r.Ratio.AsFloat() > bestRatio.AsFloat() {
+			if r.Ratio.AsFloat() > bestRatio.AsFloat() && r.MetAmount {
 				foundAnyRoute = true
 				bestRatio = r.Ratio
 				maxAmount = r.Amount
@@ -323,14 +360,14 @@ func (p *PathFinder) FindBestPathConcurrent() {
 			}
 		}
 
-		if bestRatio.AsFloat() >= p.minRatio.AsFloat() && maxAmount.AsFloat() >= p.minAmount.AsFloat() {
+		if bestRatio.AsFloat() >= p.minRatio.AsFloat() {
 			metThreshold = true
 			p.l.Info("")
 			p.l.Info("***** Minimum profit ratio was met, proceeding to payment! *****")
 			p.l.Info("")
 		}
 		if foundAnyRoute {
-			p.l.Infof("Best path was %s -> %s -> %s %s -> with return ratio of %v\n", p.endAssetDisplay, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, p.endAssetDisplay, bestRatio.AsFloat())
+			p.l.Infof("Best path was %s -> %s -> %s %s -> with return ratio of %v\n", bestPath.HoldAsset.Code, bestPath.PathAssetA.Code, bestPath.PathAssetB.Code, bestPath.HoldAsset.Code, bestRatio.AsFloat())
 			p.l.Info("")
 		} else {
 			p.l.Info("No usable route found")
@@ -340,8 +377,9 @@ func (p *PathFinder) FindBestPathConcurrent() {
 	}
 }
 
-func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*model.Number, *model.Number, error) {
+func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult, minAmount *model.Number) (*model.Number, *model.Number, bool, error) {
 	var pathBids []bidResult
+	metAmount := false
 
 	for i := 0; i < len(path.PathSequence); i++ {
 		for _, r := range bids {
@@ -353,7 +391,7 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 	}
 
 	if len(pathBids) != len(path.PathSequence) {
-		return model.NumberConstants.Zero, model.NumberConstants.Zero, fmt.Errorf("couldn't match bids with path sequence; an orderbook call may have failed")
+		return model.NumberConstants.Zero, model.NumberConstants.Zero, false, fmt.Errorf("couldn't match bids with path sequence; an orderbook call may have failed")
 	}
 
 	ratio := pathBids[0].Price
@@ -386,23 +424,22 @@ func (p *PathFinder) calculatePathValues(path *PaymentPath, bids []bidResult) (*
 		maxCycleAmount = maxLastReceive
 	}
 
+	if maxCycleAmount.AsFloat() > minAmount.AsFloat() {
+		metAmount = true
+	}
+
 	ratioDisplay := ratio.AsString()
 	if ratio.AsFloat() == 0.0 {
 		ratioDisplay = "route empty"
 	}
 
+	endAssetDisplay := path.HoldAsset.Code //this is just so XLM doesn't show up blank
+	if utils.Asset2Asset(path.HoldAsset) == build.NativeAsset() {
+		endAssetDisplay = "XLM"
+	}
+
 	// p.l.Infof("Path %s -> %s - > %s -> %s had return ratio of %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratio.AsFloat())
-	p.l.Infof("Return ratio | Cycle amount for path %s -> %s -> %s -> %s was %s | %v\n", p.endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, p.endAssetDisplay, ratioDisplay, maxCycleAmount.AsFloat())
+	p.l.Infof("Return ratio | Cycle amount for path %s -> %s -> %s -> %s was %s | %v\n", endAssetDisplay, path.PathAssetA.Code, path.PathAssetB.Code, endAssetDisplay, ratioDisplay, maxCycleAmount.AsFloat())
 
-	return ratio, maxCycleAmount, nil
-}
-
-// WhatRatio returns the minimum ratio
-func (p *PathFinder) WhatRatio() *model.Number {
-	return p.minRatio
-}
-
-// WhatAmount returns the payment amount settings
-func (p *PathFinder) WhatAmount() (bool, *model.Number) {
-	return p.useBalance, p.staticAmount
+	return ratio, maxCycleAmount, metAmount, nil
 }

@@ -143,9 +143,6 @@ func init() {
 			threadTracker,
 			*operationalBuffer,
 			stratConfig.MinRatio,
-			stratConfig.UseBalance,
-			stratConfig.StaticAmount,
-			stratConfig.MinAmount,
 			*simMode,
 			l,
 		)
@@ -185,28 +182,30 @@ func init() {
 
 		// --- end initialization of objects ---
 
-		if stratConfig.HoldAssetCode != "XLM" {
-			l.Info("validating trustlines...")
-			validateTrustlines(l, client, stratConfig, arbitConfig)
-			l.Info("trustlines valid")
+		for _, g := range stratConfig.Groups {
+			if g.HoldAssetCode != "XLM" {
+				l.Info("validating trustlines...")
+				validateTrustlines(l, client, g, arbitConfig)
+				l.Info("trustlines valid")
+			}
 		}
 
-		l.Info("Starting the trader bot...")
+		l.Info("Starting the arbitrage...")
 		arbitrageur.StartLedgerSynced()
 	}
 }
 
-func validateTrustlines(l logger.Logger, client *horizon.Client, stratConfig modules.ArbitCycleConfig, arbitConfig arbitrageur.ArbitConfig) {
+func validateTrustlines(l logger.Logger, client *horizon.Client, group modules.GroupInput, arbitConfig arbitrageur.ArbitConfig) {
 	account, e := client.LoadAccount(arbitConfig.TradingAccount())
 	if e != nil {
 		logger.Fatal(l, e)
 	}
 
 	missingTrustlines := []string{}
-	if stratConfig.HoldAssetCode != "" {
-		balance := utils.GetCreditBalance(account, stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
+	if group.HoldAssetCode != "" {
+		balance := utils.GetCreditBalance(account, group.HoldAssetCode, group.HoldAssetIssuer)
 		if balance == nil {
-			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer))
+			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", group.HoldAssetCode, group.HoldAssetIssuer))
 		}
 	}
 
