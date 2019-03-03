@@ -5,6 +5,22 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+### Added
+- Implemented the ability to use different hold assets for different asset groups. **This change required a restructuring of the arbitcycle.cfg parameters, so configuration files from version 0.3.3-alpha or earlier will not work with later versions**. See the [example file](examples/sample_arbitconfig.cfg) for the new setup.
+- Added a rate-limiter option to space out multi-threaded API calls that in some cases could trigger the Horizon API rate limit. The new option is in arbitconfig.cfg, as `RATE_LIMITER_MS`. **A line for this option must be present in the configuration file, even if it is set to 0.**
+
+### Changed
+- Changed the conceptulization of asset groups. 
+ - arbitconfig.cfg now has an additional level of nesting, `[[GROUPS]]`, with the `[[ASSETS]]` lists now named `[[GROUPS.ASSETS]]`
+ - Hold assets are now considered part of the asset group and must be specified inside each `[[GROUPS]]` entry, including if the hold asset is the same across groups
+
+### Fixed
+- Fixed an issue that caused balances for hold assets other than XLM to always return as unfindable.
+
+### Removed
+- Removed the deprecated pathRequestor code
+
+## v 0.3.3-alpha
 ### Fixed
 - Fixed a nil reference that could occur when a `calculatePathValues` call returned an error
 ### Removed
@@ -55,5 +71,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## v 0.1.0-alpha
 ### Added
 - Core Rockfish functionality: watch orderbooks, find opportunities, and make cyclical path payments
+
+### Public API definition
+- For the purposes of Semantic Versioning, the public API for Rockfish is the configuration file structure
 
 ![rockfish icon long flip](https://user-images.githubusercontent.com/43561569/52517024-0c518c00-2bfa-11e9-9cd0-e2443d7868f1.png)
