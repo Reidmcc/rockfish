@@ -5,6 +5,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
+
+
+## v 1.0.0-rc
+
 ### Added
 - Implemented the ability to use different hold assets for different asset groups. **This change required a restructuring of the arbitcycle.cfg parameters, so configuration files from version 0.3.3-alpha or earlier will not work with later versions**. See the [example file](examples/sample_arbitconfig.cfg) for the new setup.
 - Added a rate-limiter option to space out multi-threaded API calls that in some cases could trigger the Horizon API rate limit. The new option is in arbitconfig.cfg, as `RATE_LIMITER_MS`. **A line for this option must be present in the configuration file, even if it is set to 0.**
