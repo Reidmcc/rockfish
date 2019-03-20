@@ -29,6 +29,7 @@ type DexWatcher struct {
 	API           *horizon.Client
 	Network       build.Network
 	threadTracker *multithreading.ThreadTracker
+	rateLimiter   func()
 	booksOut      chan<- *horizon.OrderBookSummary
 	ledgerOut     chan horizon.Ledger
 	l             logger.Logger
@@ -39,6 +40,7 @@ func MakeDexWatcher(
 	api *horizon.Client,
 	network build.Network,
 	threadTracker *multithreading.ThreadTracker,
+	rateLimiter func(),
 	booksOut chan<- *horizon.OrderBookSummary,
 	ledgerOut chan horizon.Ledger,
 	l logger.Logger) *DexWatcher {
@@ -47,6 +49,7 @@ func MakeDexWatcher(
 		API:           api,
 		Network:       network,
 		threadTracker: threadTracker,
+		rateLimiter:   rateLimiter,
 		booksOut:      booksOut,
 		ledgerOut:     ledgerOut,
 		l:             l,
@@ -154,6 +157,7 @@ func (w *DexWatcher) StreamManager(pairList []TradingPair) {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 		for _, b := range pairList {
 			go w.AddTrackedBook(ctx, b, "20")
+			w.rateLimiter()
 		}
 		<-streamTicker.C
 		cancel()
@@ -196,7 +200,7 @@ func (w *DexWatcher) AddTrackedBook(ctx context.Context, pair TradingPair, limit
 	if pair.Quote.Type == "native" {
 		quoteCodeDisplay = "XLM"
 	}
-	baseCodeDisplay := pair.Quote.Code
+	baseCodeDisplay := pair.Base.Code
 	if pair.Base.Type == "native" {
 		baseCodeDisplay = "XLM"
 	}

@@ -122,7 +122,6 @@ func init() {
 
 		// only log arbitConfig file here so it can be included in the log file
 		utils.LogConfig(arbitConfig)
-		l.Info("")
 		utils.LogConfig(stratConfig)
 
 		// --- start initialization of objects ----
@@ -133,6 +132,18 @@ func init() {
 			HTTP: http.DefaultClient,
 		}
 
+		rateLimiter := func() {}
+		if arbitConfig.RateLimiterMS > 0 {
+			rateLimiter = func() { time.Sleep(time.Duration(arbitConfig.RateLimiterMS) * time.Millisecond) }
+		}
+
+		booksOut := make(chan *horizon.OrderBookSummary, 20)
+		ledgerOut := make(chan horizon.Ledger)
+		findIt := make(chan bool)
+		pathReturn := make(chan modules.PathFindOutcome)
+		refresh := make(chan bool)
+		submitDone := make(chan bool)
+
 		dexAgent := modules.MakeDexAgent(
 			client,
 			arbitConfig.SourceSecretSeed,
@@ -141,30 +152,24 @@ func init() {
 			arbitConfig.TradingAccount(),
 			utils.ParseNetwork(arbitConfig.HorizonURL),
 			threadTracker,
+			rateLimiter,
+			submitDone,
 			*operationalBuffer,
 			stratConfig.MinRatio,
-			stratConfig.UseBalance,
-			stratConfig.StaticAmount,
-			stratConfig.MinAmount,
 			*simMode,
 			l,
 		)
-
-		booksOut := make(chan *horizon.OrderBookSummary, 20)
-		ledgerOut := make(chan horizon.Ledger)
-		findIt := make(chan bool)
-		pathReturn := make(chan modules.PathFindOutcome)
-		refresh := make(chan bool)
 
 		dexWatcher := modules.MakeDexWatcher(
 			client,
 			utils.ParseNetwork(arbitConfig.HorizonURL),
 			threadTracker,
+			rateLimiter,
 			booksOut,
 			ledgerOut,
 			l)
 
-		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, findIt, pathReturn, refresh, l)
+		pathFinder, e := modules.MakePathFinder(*dexWatcher, stratConfig, rateLimiter, findIt, pathReturn, refresh, l)
 		if e != nil {
 			logger.Fatal(l, fmt.Errorf("Couldn't make Patherfinder: %s", e))
 		}
@@ -174,39 +179,43 @@ func init() {
 			*dexWatcher,
 			dexAgent,
 			threadTracker,
+			rateLimiter,
 			*simMode,
 			booksOut,
 			ledgerOut,
 			findIt,
 			pathReturn,
 			refresh,
+			submitDone,
 			l,
 		)
 
 		// --- end initialization of objects ---
 
-		if stratConfig.HoldAssetCode != "XLM" {
-			l.Info("validating trustlines...")
-			validateTrustlines(l, client, stratConfig, arbitConfig)
-			l.Info("trustlines valid")
+		for _, g := range stratConfig.Groups {
+			if g.HoldAssetCode != "XLM" {
+				l.Info("validating trustlines...")
+				validateTrustlines(l, client, g, arbitConfig)
+				l.Info("trustlines valid")
+			}
 		}
 
-		l.Info("Starting the trader bot...")
+		l.Info("Starting arbitrage...")
 		arbitrageur.StartLedgerSynced()
 	}
 }
 
-func validateTrustlines(l logger.Logger, client *horizon.Client, stratConfig modules.ArbitCycleConfig, arbitConfig arbitrageur.ArbitConfig) {
+func validateTrustlines(l logger.Logger, client *horizon.Client, group modules.GroupInput, arbitConfig arbitrageur.ArbitConfig) {
 	account, e := client.LoadAccount(arbitConfig.TradingAccount())
 	if e != nil {
 		logger.Fatal(l, e)
 	}
 
 	missingTrustlines := []string{}
-	if stratConfig.HoldAssetCode != "" {
-		balance := utils.GetCreditBalance(account, stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer)
+	if group.HoldAssetCode != "" {
+		balance := utils.GetCreditBalance(account, group.HoldAssetCode, group.HoldAssetIssuer)
 		if balance == nil {
-			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", stratConfig.HoldAssetCode, stratConfig.HoldAssetIssuer))
+			missingTrustlines = append(missingTrustlines, fmt.Sprintf("%s:%s", group.HoldAssetCode, group.HoldAssetIssuer))
 		}
 	}
 

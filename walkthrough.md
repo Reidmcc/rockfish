@@ -44,11 +44,28 @@ The URL for the Stellar Horizon API that Rockfish will query. The Stellar founda
 
 `HORIZON_URL="https://horizon-testnet.stellar.org"`
 
+-----------------
+An optional number of milliseconds for Rockfish to pause between multi-threaded API calls, to prevent triggering the Horizon rate-limiter when using a lot of assets.
+
+`RATE_LIMITER_MS=5`
+
 #### Arbitcycle
 
 The actual settings for Rockfish:
 
-The hold asset; this is what you need in Rockfish's trading account. For any asset that is not XLM you will also need the token issuer's account address, which you can find on any of the web front-ends for the SDEX, or on the [stellar.expert](https://stellar.expert) block explorer:
+The first parameter is what profit margin Rockfish should look for before it bothers sending a cycle. If you trade on centralized exchanges you may be used to fees based on the size of a trade. On the SDEX there is a flat fee of 0.00001 lumen per operation, regardless of payment or trade size. If we were doing this on a centralized exchange we'd have to account for something like a 0.1% fee per step; on the SDEX we can pursue much smaller margins.
+
+`MIN_RATIO=1.0001`
+
+-----------------
+
+Rockfish conceptualizes its paths as one or more groups of assets. It will check all possible paths through the assets you list, which can add up to a *lot* of paths if you set more than a few assets and they're all together. Thus, we need to break the assets we're using into groups that actually trade against one-another. You *can* have the same asset in multiple groups, which can be useful when you want to use the same asset as the hold asset for multiple trade clusters. Rockfish will combine all the generated paths into an overall path list that it will check as a unit; the groups determine what Rockfish is looking for, not how it goes about it.
+
+Every group starts with a `[[GROUPS]]` line to demarcate the split between groups and contains the below parameters. You may have as many groups as you like.
+
+-----------------
+
+First, the hold asset; this is what you need in Rockfish's trading account. For any asset that is not XLM you will also need the token issuer's account address, which you can find on any of the web front-ends for the SDEX, or on the [stellar.expert](https://stellar.expert) block explorer:
 
 `HOLD_ASSET_CODE="XLM"`
 `HOLD_ASSET_ISSUER=""`
@@ -71,19 +88,12 @@ What minimum amount of the hold asset Rockfish should consider sending if your s
 
 -----------------
 
-What profit margin Rockfish should look for before it bothers sending a cycle. If you trade on centralized exchanges you may be used to fees based on the size of a trade. On the SDEX there is a flat fee of 0.00001 lumen per operation, regardless of payment or trade size. If we were doing this on a centralized exchange we'd have to account for something like a 0.1% fee per step; on the SDEX we can pursue much smaller margins.
-
-`MIN_RATIO=1.0001`
-
------------------
-
-The assets you want to trade through, each in preceeded by `[[ASSETS]]`. You must have at least two, but the list can be as many as you like. Note the `GROUP` parameter. Rockfish will check all possible paths through the assets you list, which can add up to a *lot* of paths if you set more than a few assets. To keep this under control, set the assets that actually trade against each other to the same group number, and if there is another set of assets you want to use, set them to a different group number. Use integers here, unlike most other settings, which are decimal values.
+The assets you want to trade through, each in preceeded by `[[GROUPS.ASSETS]]`. You must have at least two, but the list can be as many as you like. 
 
 ````
-[[ASSETS]]
+[[GROUPS.ASSETS]]
 CODE = "COUPON" 
 ISSUER = "GSIGH..."  
-GROUP = 1
 ````
 
 ### Run Rockfish
@@ -106,7 +116,7 @@ Other optional flags are available:
 
 ### Monitor the ratios and cycle attempts to see if you've chosen effective asset groups. 
 
-When Rockfish attempts a cycle, Stellar will often return `[op_over_source_max]`, which means that the cost of the payment cycle is more than what Rockfish specified (i.e., you would lose money). This is a valid response and does not indicate a bug. The intended meaning is that the offers upon which the path was based have been taken or cancelled. Currently this is the most common response to Rockfish cycle attempts, and it is unclear whether the paths really are being removed that quickly or whether the network is determining path cost by a method that does not match Rockfish's price ratio methodology, see issue [2](https://github.com/Reidmcc/rockfish/issues/2). 
+When Rockfish attempts a cycle, Stellar will often return `[op_over_source_max]`, which means that the cost of the payment cycle is more than what Rockfish specified (i.e., you would lose money). This is a valid response and does not indicate a bug. The intended meaning is that the offers upon which the path was based have been taken or cancelled. Currently this is the most common response to Rockfish cycle attempts, and it is unclear whether the paths really are being removed that quickly or whether the network is determining path cost by a method that does not match Rockfish's price ratio methodology.
 
 Note that no losing cycle will go through; either it succeeds and your balance increases or it bounces. You do pay the 0.00001 lumen network fee for a bounced transaction, but that is trivial if you're ever succeeding.
 
